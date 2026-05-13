@@ -1,0 +1,4 @@
+{
+  "old": "SettingsView close button works.",
+  "new": "SettingsView close button does not dismiss."
+}

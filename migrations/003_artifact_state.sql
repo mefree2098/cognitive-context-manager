@@ -1,0 +1,1 @@
+-- Artifact state is included in the initial MVP schema.

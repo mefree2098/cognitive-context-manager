@@ -1,0 +1,11 @@
+{
+  "mcp_servers": {
+    "cognitive-context-manager": {
+      "command": "node",
+      "args": ["./dist/mcp/server.js"],
+      "env": {
+        "CCM_MODE": "mcp"
+      }
+    }
+  }
+}

@@ -1,0 +1,1 @@
+-- Initial local-first CCM schema. The runtime executes the compiled schema from src/storage/schema.sql.

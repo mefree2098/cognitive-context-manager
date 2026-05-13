@@ -1,0 +1,68 @@
+{
+  "name": "cognitive-context-manager",
+  "version": "0.3.0",
+  "description": "Context and memory management harness for long Codex sessions.",
+  "type": "module",
+  "license": "MIT",
+  "author": {
+    "name": "Matt Freestone",
+    "email": "matt@freestonefamily.com"
+  },
+  "keywords": [
+    "codex",
+    "context",
+    "memory",
+    "mcp",
+    "hooks",
+    "long-running-agents"
+  ],
+  "bin": {
+    "ccm": "./dist/cli/ccm.js",
+    "ccm-mcp": "./dist/mcp/server.js",
+    "ccm-hook": "./dist/hooks/hook-entry.js"
+  },
+  "files": [
+    ".codex-plugin",
+    ".mcp.json",
+    "hooks",
+    "skills",
+    "dist",
+    "docs",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev:mcp": "tsx src/mcp/server.ts",
+    "dev:hook": "tsx src/hooks/hook-entry.ts",
+    "ccm": "tsx src/cli/ccm.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint src tests",
+    "format": "prettier --write .",
+    "check": "npm run build && npm run lint && npm run test"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "latest",
+    "better-sqlite3": "latest",
+    "commander": "latest",
+    "fast-glob": "latest",
+    "nanoid": "latest",
+    "strip-ansi": "latest",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/better-sqlite3": "latest",
+    "@types/node": "latest",
+    "eslint": "latest",
+    "prettier": "latest",
+    "tsx": "latest",
+    "typescript": "latest",
+    "typescript-eslint": "latest",
+    "vitest": "latest"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

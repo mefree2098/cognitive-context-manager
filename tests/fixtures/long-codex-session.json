@@ -1,0 +1,7 @@
+{
+  "events": [
+    { "event": "UserPromptSubmit", "prompt": "Build the plugin and remember to verify it." },
+    { "event": "PostToolUse", "command": "npm run test", "exitCode": 1, "output": "Tests failed." },
+    { "event": "PostToolUse", "command": "npm run test", "exitCode": 0, "output": "Tests passed." }
+  ]
+}

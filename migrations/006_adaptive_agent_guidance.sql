@@ -1,0 +1,4 @@
+-- Adaptive Agent Guidance additive schema:
+-- adaptive_agent_versions records applied guidance versions for rollback.
+-- adaptive_agent_patches records candidate, pending, applied, and rejected patches.
+-- Runtime migration SQL lives in src/storage/migrations.ts and is idempotent.

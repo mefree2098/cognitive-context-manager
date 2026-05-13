@@ -1,0 +1,4 @@
+-- Post-MVP additive schema:
+-- trace_entries, raw_evidence, embeddings, embedding_jobs, consolidation_jobs,
+-- metrics, agents_suggestions, sync_records, audit_log, entities, entity_edges,
+-- and memory_entities are created idempotently by src/storage/migrations.ts.

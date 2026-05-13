@@ -1,0 +1,35 @@
+{
+  "name": "cognitive-context-manager",
+  "version": "0.3.0",
+  "description": "Context and memory management harness for long Codex sessions.",
+  "author": {
+    "name": "Matt Freestone",
+    "email": "matt@freestonefamily.com"
+  },
+  "license": "MIT",
+  "keywords": [
+    "codex",
+    "context",
+    "memory",
+    "mcp",
+    "hooks",
+    "long-running-agents"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "hooks": "./hooks/hooks.json",
+  "interface": {
+    "displayName": "Cognitive Context Manager",
+    "shortDescription": "Keeps Codex context clean across long sessions.",
+    "longDescription": "Captures session events, consolidates memory, tracks open loops, and exposes compact working-context briefs to Codex through MCP tools.",
+    "developerName": "Matt Freestone",
+    "category": "Productivity",
+    "capabilities": ["Read", "Write"],
+    "defaultPrompt": [
+      "Use Cognitive Context Manager to load the current project context before starting this task.",
+      "Use Cognitive Context Manager to summarize the current session state and open loops.",
+      "Use Cognitive Context Manager to record this decision and keep future Codex turns aligned."
+    ],
+    "brandColor": "#7C3AED"
+  }
+}

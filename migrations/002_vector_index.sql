@@ -1,0 +1,1 @@
+-- Reserved for optional vector search. MVP uses SQLite FTS5 only.

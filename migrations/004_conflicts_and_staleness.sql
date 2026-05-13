@@ -1,0 +1,1 @@
+-- Conflict and staleness columns are included in the initial MVP schema.
