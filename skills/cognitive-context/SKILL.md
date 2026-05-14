@@ -1,6 +1,6 @@
 ---
 name: cognitive-context
-description: Use when a Codex task spans multiple turns, modifies code, resumes prior work, depends on project memory, requires remembering decisions, or needs clean working context. Do not use for trivial one-shot questions.
+description: Automatically use for every non-trivial Codex workspace task, including coding, debugging, review, deployment, resumed work, prior-context questions, and any task that may create decisions or open loops. Skip only trivial one-shot questions.
 ---
 
 # Cognitive Context Manager Skill
