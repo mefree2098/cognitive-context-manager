@@ -104,13 +104,14 @@ interface ProjectAggregateRow {
   last_seen_at: string;
 }
 
+const CHECKPOINT_FILE_REGEX = /\b(?:page[_ -]?\d{1,4}\.(?:png|jpg|jpeg)|page[_ -]?\d{1,4}|title_page\.(?:png|jpg|jpeg)|contact_sheet[^ \n]*)\b/gi;
 const CHECKPOINT_REGEX = /\b(?:page[_ -]?\d{1,4}\.(?:png|jpg|jpeg)|page[_ -]?\d{1,4}|title_page\.(?:png|jpg|jpeg)|contact_sheet[^ \n]*|checkpoint|last confirmed|confirmed on disk|disk confirms|filesystem checkpoint)\b/gi;
 const RESUME_REGEX = /\b(?:resume|resuming|resumed|continue from|pick(?:ed)? up|restart(?:ed)? from|recover(?:ed|y|ing)?|handoff|session handoff)\b/i;
 const RECOVERY_REGEX = /\b(?:recovered|resumed|continu(?:e|ed|ing)|verified on disk|disk confirms|last confirmed|checkpoint|handoff)\b/i;
 const FAILURE_REGEX = /\b(?:fail(?:ed|ure)?|error|crash(?:ed)?|die(?:d|s)?|chok(?:e|ed|es|ing)|timeout|timed out|interrupted|stuck|loop(?:ing)?|reconnect|disconnect|blocked)\b/i;
 const LONG_RUNNING_REGEX = /\b(?:long[- ]running|full manga|volume|batch|pages? \d{1,4}|\d{1,4}[- ]page|production run|checkpoint-heavy)\b/i;
 const FILESYSTEM_VERIFY_REGEX = /\b(?:disk confirms|confirmed on disk|verified on disk|filesystem|finder verification|ls confirms|reading image_source_map|source_map)\b/i;
-const SECRET_REGEX = /\b(?:redacted:|REDACTED_|api key|token|secret|password|private key)\b/i;
+const SECRET_REGEX = /\b(?:redacted:[a-z0-9_-]+|REDACTED_[A-Z0-9_]+|(?:api[_ -]?key|token|secret|password|private[_ -]?key)\s*[:=]|sk-[A-Za-z0-9_-]{16,})\b/i;
 
 export class EffectivenessReportService {
   constructor(
@@ -471,6 +472,9 @@ function hasRegex(text: string, pattern: RegExp): boolean {
 }
 
 function checkpointFrom(text: string): string | undefined {
+  CHECKPOINT_FILE_REGEX.lastIndex = 0;
+  const fileMatches = [...text.matchAll(CHECKPOINT_FILE_REGEX)].map((match) => match[0]);
+  if (fileMatches.length) return fileMatches.at(-1);
   CHECKPOINT_REGEX.lastIndex = 0;
   const matches = [...text.matchAll(CHECKPOINT_REGEX)].map((match) => match[0]);
   return matches.at(-1);
