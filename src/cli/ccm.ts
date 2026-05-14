@@ -15,6 +15,7 @@ import { registerInitCommand } from "./commands/init.js";
 import { registerKeysCommand } from "./commands/keys.js";
 import { registerMemoryCommand } from "./commands/memory.js";
 import { registerProjectCommand } from "./commands/project.js";
+import { registerReportCommand } from "./commands/report.js";
 import { registerStatusCommand } from "./commands/status.js";
 import { registerSyncCommand } from "./commands/sync.js";
 import { registerTraceCommand } from "./commands/trace.js";
@@ -30,6 +31,7 @@ export function buildCli(): Command {
   registerDbCommand(program);
   registerMemoryCommand(program);
   registerProjectCommand(program);
+  registerReportCommand(program);
   registerTraceCommand(program);
   registerContextCommand(program);
   registerConflictsCommand(program);

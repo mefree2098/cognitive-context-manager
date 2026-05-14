@@ -79,6 +79,7 @@ ccm db verify
 ccm trace explain --latest
 ccm context preview --query "resume this refactor"
 ccm context dividend
+ccm report effectiveness --since 7d --format markdown
 ccm memory search "theme system"
 ccm memory show <memory-id>
 ccm memory forget <memory-id>

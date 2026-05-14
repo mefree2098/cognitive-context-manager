@@ -16,6 +16,13 @@ ccm db backup
 ccm db verify
 ccm trace explain --latest
 ccm context dividend
+ccm report effectiveness --since 7d --format markdown
+```
+
+`ccm report effectiveness` is a local-only usefulness report for deciding whether CCM is actually helping. It combines context-brief activations, stored memories, open-loop preservation, token-savings estimates, hook/MCP reliability, and long-running task resilience signals such as resume/checkpoint/failure/recovery language. For checkpoint-heavy work such as manga generation, run:
+
+```bash
+ccm report effectiveness --since all --project-name manga --format markdown
 ```
 
 ## Optional Embeddings

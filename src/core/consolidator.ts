@@ -4,6 +4,7 @@ import type Database from "better-sqlite3";
 import { loadConfig } from "../config/load-config.js";
 import { ArtifactsRepo, hashFile } from "../storage/repositories/artifacts-repo.js";
 import { EventsRepo } from "../storage/repositories/events-repo.js";
+import { EffectivenessReportService, type EffectivenessReportOptions } from "./effectiveness-report.js";
 import { MemoriesRepo } from "../storage/repositories/memories-repo.js";
 import { OpenLoopsRepo } from "../storage/repositories/open-loops-repo.js";
 import { ProjectsRepo } from "../storage/repositories/projects-repo.js";
@@ -519,6 +520,10 @@ export class CcmService {
 
   contextDividend(sessionId?: string) {
     return new MetricsService(this.db).contextDividend(sessionId);
+  }
+
+  effectivenessReport(input: EffectivenessReportOptions = {}) {
+    return new EffectivenessReportService(this.db, loadConfig(process.cwd())).report(input);
   }
 
   reconcileConflicts(projectId?: string) {

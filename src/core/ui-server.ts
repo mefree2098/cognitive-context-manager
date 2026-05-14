@@ -3,6 +3,7 @@ import type Database from "better-sqlite3";
 import { CcmService } from "./consolidator.js";
 import { MetricsService } from "./metrics.js";
 import { HygieneService } from "./hygiene.js";
+import { EffectivenessReportService } from "./effectiveness-report.js";
 import type { CcmConfig } from "../types/config.js";
 import { redactSecrets } from "./secret-redactor.js";
 
@@ -33,6 +34,7 @@ function route(request: IncomingMessage, response: ServerResponse, service: CcmS
       openLoops: service.openLoops.list(undefined, false, 20),
       conflicts: service.conflicts.unresolved(undefined, 20),
       contextDividend: new MetricsService(service.db).contextDividend(),
+      effectivenessReport: new EffectivenessReportService(service.db, config).report({ since: "7d", sampleLimit: 3 }),
       hygiene: new HygieneService(service.db, config).report()
     });
     return;

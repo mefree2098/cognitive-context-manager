@@ -7,6 +7,7 @@ import { AgentsSuggestionService } from "../../src/core/agents-suggestions.js";
 import { BenchService } from "../../src/core/bench-service.js";
 import { backupDatabase, schemaStatus, verifyDatabase } from "../../src/core/db-admin.js";
 import { EmbeddingService } from "../../src/core/embedding-provider.js";
+import { EffectivenessReportService } from "../../src/core/effectiveness-report.js";
 import { HygieneService } from "../../src/core/hygiene.js";
 import { SyncService } from "../../src/core/sync-service.js";
 import { CcmService } from "../../src/core/consolidator.js";
@@ -41,6 +42,47 @@ describe("post-MVP features", () => {
       expect(schemaStatus(context.db).ok).toBe(true);
       expect(verifyDatabase(context.db).ok).toBe(true);
       expect(existsSync(backupDatabase(repo))).toBe(true);
+    } finally {
+      context.db.close();
+    }
+  });
+
+  it("reports long-running task effectiveness and resume checkpoints", () => {
+    const context = openDb(repo);
+    try {
+      const service = new CcmService({ db: context.db, repoPath: repo });
+      const { project, session } = service.ensureProjectSession(repo, "manga");
+      service.events.create({
+        projectId: project.id,
+        sessionId: session.id,
+        eventType: "failure",
+        title: "Generation stalled",
+        summary: "The full manga generation choked during a long-running batch and needs recovery.",
+        entities: [],
+        sourceRefs: [],
+        salience: 0.9,
+        confidence: 0.8
+      });
+      service.events.create({
+        projectId: project.id,
+        sessionId: session.id,
+        eventType: "artifact_change",
+        title: "Resume checkpoint",
+        summary: "Disk confirms title_page.png plus page_001.png through page_012.png; resuming at page_013.png.",
+        entities: [],
+        sourceRefs: [],
+        salience: 0.9,
+        confidence: 0.85
+      });
+      service.getWorkingContext({ task: "resume manga from page_013.png", repoPath: repo, projectName: "manga" });
+
+      const report = new EffectivenessReportService(context.db, loadConfig(repo)).report({ since: "all", projectName: "manga" });
+      expect(report.resilience.failureSignals).toBeGreaterThan(0);
+      expect(report.resilience.resumeSignals).toBeGreaterThan(0);
+      expect(report.resilience.checkpointSignals).toBeGreaterThan(0);
+      expect(report.resilience.lastCheckpoint).toBe("page_013.png");
+      expect(report.summary.contextBriefsGenerated).toBeGreaterThan(0);
+      expect(new EffectivenessReportService(context.db, loadConfig(repo)).renderMarkdown(report)).toContain("Long-Running Task Resilience");
     } finally {
       context.db.close();
     }
