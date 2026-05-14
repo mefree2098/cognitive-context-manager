@@ -24,7 +24,7 @@
     "longDescription": "Captures session events, consolidates memory, tracks open loops, and exposes compact working-context briefs to Codex through MCP tools.",
     "developerName": "Matt Freestone",
     "category": "Productivity",
-    "capabilities": ["Read", "Write"],
+    "capabilities": ["Interactive", "Read", "Write"],
     "defaultPrompt": [
       "Use Cognitive Context Manager to load the current project context before starting this task.",
       "Use Cognitive Context Manager to summarize the current session state and open loops.",
