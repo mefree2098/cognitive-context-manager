@@ -88,6 +88,62 @@ describe("post-MVP features", () => {
     }
   });
 
+  it("dedupes same-root report projects and avoids negated failure false positives", () => {
+    const context = openDb(repo);
+    try {
+      const service = new CcmService({ db: context.db, repoPath: repo });
+      const { project } = service.ensureProjectSession(repo, "RecipeVault");
+      const upserted = service.projects.upsert({
+        ...project,
+        id: "project_remote_after_publish",
+        gitRemote: "https://github.com/mefree2098/RecipeVault.git"
+      });
+      expect(upserted.id).toBe(project.id);
+
+      service.recordDecision({
+        projectId: project.id,
+        decision: "Verification checkpoint: clean xcodebuild succeeded with no warning/error lines.",
+        source: "codex"
+      });
+
+      const now = new Date().toISOString();
+      const legacyProjectId = "project_legacy_remote_duplicate";
+      const legacySessionId = "session_legacy_remote_duplicate";
+      context.db
+        .prepare(
+          `INSERT INTO projects(id, name, root_path, git_remote, git_branch, created_at, updated_at, last_seen_at, metadata_json)
+           VALUES (?, 'RecipeVault', ?, 'https://github.com/mefree2098/RecipeVault.git', 'main', ?, ?, ?, '{}')`
+        )
+        .run(legacyProjectId, repo, now, now, now);
+      context.db
+        .prepare(
+          `INSERT INTO sessions(id, project_id, codex_session_id, started_at, last_seen_at, status, metadata_json)
+           VALUES (?, ?, NULL, ?, ?, 'active', '{}')`
+        )
+        .run(legacySessionId, legacyProjectId, now, now);
+      service.recordDecision({
+        projectId: legacyProjectId,
+        decision: "Build failure checkpoint: first xcodebuild failed because ContentView used an unavailable initializer.",
+        source: "codex"
+      });
+      service.getWorkingContext({ task: "resume RecipeVault QA", repoPath: repo, projectName: "RecipeVault" });
+
+      const report = new EffectivenessReportService(context.db, loadConfig(repo)).report({ since: "all", projectName: "RecipeVault" });
+      expect(report.summary.projectsObserved).toBe(1);
+      expect(report.summary.sessionsObserved).toBe(2);
+      expect(report.projects).toHaveLength(1);
+      expect(report.projects[0]?.sessions).toBe(2);
+      expect(report.resilience.failureSignals).toBe(1);
+      expect(report.evidence.failureSamples.join("\n")).not.toContain("no warning/error");
+      expect(report.reliability.explicitMcpRecords).toBeGreaterThan(0);
+      expect(report.reliability.passiveHookEvents).toBe(0);
+      expect(report.reliability.captureMode).toBe("explicit_mcp_only");
+      expect(report.publishReadiness.gaps).toContain("No passive hook events were captured in this window.");
+    } finally {
+      context.db.close();
+    }
+  });
+
   it("supports opt-in local embeddings and FTS fallback when disabled", async () => {
     let context = openDb(repo);
     try {

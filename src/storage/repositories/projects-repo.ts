@@ -34,8 +34,9 @@ export class ProjectsRepo {
   constructor(private readonly db: Database.Database) {}
 
   upsert(project: ProjectSummary): ProjectSummary {
-    const existing = this.get(project.id);
-    const createdAt = existing?.createdAt ?? project.createdAt ?? nowIso();
+    const existing = this.get(project.id) ?? (project.rootPath ? this.getByRoot(project.rootPath) : undefined);
+    const persistedProject = existing ? { ...project, id: existing.id } : project;
+    const createdAt = existing?.createdAt ?? persistedProject.createdAt ?? nowIso();
     const updatedAt = nowIso();
     this.db
       .prepare(
@@ -51,17 +52,17 @@ export class ProjectsRepo {
            metadata_json = excluded.metadata_json`
       )
       .run({
-        id: project.id,
-        name: project.name,
-        rootPath: project.rootPath,
-        gitRemote: project.gitRemote,
-        gitBranch: project.gitBranch,
+        id: persistedProject.id,
+        name: persistedProject.name,
+        rootPath: persistedProject.rootPath,
+        gitRemote: persistedProject.gitRemote,
+        gitBranch: persistedProject.gitBranch,
         createdAt,
         updatedAt,
         lastSeenAt: updatedAt,
-        metadataJson: json(project.metadata)
+        metadataJson: json(persistedProject.metadata)
       });
-    return this.get(project.id)!;
+    return this.get(persistedProject.id)!;
   }
 
   get(id: string): ProjectSummary | undefined {
@@ -70,7 +71,7 @@ export class ProjectsRepo {
   }
 
   getByRoot(rootPath: string): ProjectSummary | undefined {
-    const row = this.db.prepare("SELECT * FROM projects WHERE root_path = ?").get(rootPath) as Row | undefined;
+    const row = this.db.prepare("SELECT * FROM projects WHERE root_path = ? ORDER BY last_seen_at DESC LIMIT 1").get(rootPath) as Row | undefined;
     return row ? mapProject(row) : undefined;
   }
 

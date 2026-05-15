@@ -1,0 +1,80 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ./dist/hooks/hook-entry.js SessionStart",
+            "timeout": 30,
+            "statusMessage": "Loading cognitive context"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ./dist/hooks/hook-entry.js UserPromptSubmit",
+            "timeout": 30,
+            "statusMessage": "Indexing prompt context"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ./dist/hooks/hook-entry.js PreToolUse",
+            "timeout": 30,
+            "statusMessage": "Checking context and safety"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ./dist/hooks/hook-entry.js PostToolUse",
+            "timeout": 60,
+            "statusMessage": "Consolidating tool result"
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ./dist/hooks/hook-entry.js PermissionRequest",
+            "timeout": 20,
+            "statusMessage": "Reviewing approval context"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ./dist/hooks/hook-entry.js Stop",
+            "timeout": 60,
+            "statusMessage": "Saving session memory"
+          }
+        ]
+      }
+    ]
+  }
+}

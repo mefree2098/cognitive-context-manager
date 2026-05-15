@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import type { Command } from "commander";
 import { containsSecret, redactSecrets } from "../../core/secret-redactor.js";
@@ -24,6 +25,37 @@ function checkJson(path: string): Check {
   }
 }
 
+function checkCodexHooksFeature(): Check {
+  const configPath = join(homedir(), ".codex", "config.toml");
+  if (!existsSync(configPath)) {
+    return { name: "Codex hooks feature flag", ok: false, detail: `${configPath} not found; add [features] hooks = true` };
+  }
+  const config = readFileSync(configPath, "utf8");
+  const featuresSection = tomlSection(config, "features");
+  const hasHooks = /^\s*hooks\s*=\s*true\s*$/m.test(featuresSection);
+  const hasDeprecatedHooks = /^\s*codex_hooks\s*=\s*true\s*$/m.test(featuresSection);
+  return {
+    name: "Codex hooks feature flag",
+    ok: hasHooks,
+    detail: hasHooks ? `${configPath} has [features].hooks = true` : hasDeprecatedHooks ? "`codex_hooks` is deprecated; use `hooks = true`" : "Add [features] hooks = true"
+  };
+}
+
+function tomlSection(config: string, name: string): string {
+  const lines = config.split(/\r?\n/);
+  const body: string[] = [];
+  let inSection = false;
+  for (const line of lines) {
+    const section = /^\s*\[([^\]]+)\]\s*$/.exec(line)?.[1];
+    if (section) {
+      inSection = section === name;
+      continue;
+    }
+    if (inSection) body.push(line);
+  }
+  return body.join("\n");
+}
+
 export function runDoctor(cwd = process.cwd()): Check[] {
   const root = resolve(cwd);
   const context = openDb(cwd);
@@ -40,7 +72,9 @@ export function runDoctor(cwd = process.cwd()): Check[] {
     checks.push({ name: "Schema version", ok: schema.ok, detail: `${schema.current}/${schema.expected}` });
     checks.push(checkJson(join(root, ".codex-plugin", "plugin.json")));
     checks.push(checkJson(join(root, ".mcp.json")));
+    checks.push(checkJson(join(root, "hooks.json")));
     checks.push(checkJson(join(root, "hooks", "hooks.json")));
+    checks.push(checkCodexHooksFeature());
     checks.push({
       name: "MCP build output",
       ok: existsSync(join(root, "dist", "mcp", "server.js")),

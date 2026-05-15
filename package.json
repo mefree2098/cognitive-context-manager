@@ -1,6 +1,6 @@
 {
   "name": "cognitive-context-manager",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Context and memory management harness for long Codex sessions.",
   "type": "module",
   "license": "MIT",
@@ -24,8 +24,10 @@
   "files": [
     ".codex-plugin",
     ".mcp.json",
+    "hooks.json",
     "hooks",
     "skills",
+    "scripts",
     "dist",
     "docs",
     "README.md",
@@ -40,7 +42,9 @@
     "test:watch": "vitest",
     "lint": "eslint src tests",
     "format": "prettier --write .",
-    "check": "npm run build && npm run lint && npm run test"
+    "check": "npm run build && npm run lint && npm run test",
+    "install:local": "bash scripts/install-local-plugin.sh",
+    "package:local": "bash scripts/package-local-plugin.sh"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "latest",

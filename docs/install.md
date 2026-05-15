@@ -1,76 +1,106 @@
 # Installation
 
-## Build Plugin
+## Codex Desktop Local Plugin
+
+From a clone or extracted release bundle:
 
 ```bash
 cd cognitive-context-manager
-npm install
-npm run build
-npm run check
-node dist/cli/ccm.js init
-node dist/cli/ccm.js doctor
+./scripts/install-local-plugin.sh
 ```
 
-## Enable Hooks
+The installer:
 
-Ensure your Codex config includes:
+- copies CCM into `~/.codex/local-marketplaces/ccm/plugins/cognitive-context-manager`
+- writes `~/.codex/local-marketplaces/ccm/.agents/plugins/marketplace.json`
+- enables `[features].hooks = true` and `[features].memories = true` in `~/.codex/config.toml`
+- enables `[plugins."cognitive-context-manager@local"]`
+- runs `npm ci`, `npm run build`, `npm prune --omit=dev`, `ccm init`, and `ccm doctor`
 
-```toml
-[features]
-codex_hooks = true
+Restart Codex Desktop after the installer finishes. In Plugins, choose the Local marketplace if needed and enable Cognitive Context Manager.
+
+## Shareable Bundle
+
+Package a tested tarball:
+
+```bash
+npm run package:local
 ```
 
-Native Codex memories are optional:
-
-```toml
-[features]
-memories = true
-```
-
-## Local Marketplace
-
-Create or update:
+This creates:
 
 ```text
-~/.agents/plugins/marketplace.json
+release/cognitive-context-manager-<version>-local.tar.gz
+release/cognitive-context-manager-<version>-local.tar.gz.sha256
 ```
 
-Example:
+A colleague can install it with:
+
+```bash
+tar -xzf cognitive-context-manager-<version>-local.tar.gz
+cd cognitive-context-manager
+./scripts/install-local-plugin.sh
+```
+
+## Manual Marketplace Fallback
+
+If you need to inspect or repair the marketplace entry manually, the installer writes this shape:
 
 ```json
 {
   "name": "local",
+  "interface": {
+    "displayName": "Local"
+  },
   "plugins": [
     {
+      "name": "cognitive-context-manager",
       "source": {
-        "path": "/absolute/path/to/cognitive-context-manager"
+        "source": "local",
+        "path": "./plugins/cognitive-context-manager"
       },
-      "interface": {
-        "displayName": "Cognitive Context Manager"
-      }
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
     }
   ]
 }
 ```
 
-Restart Codex, select the local marketplace, and install/enable the plugin.
+The marketplace directory itself should be registered in `~/.codex/config.toml`:
 
-## Verify MCP
+```toml
+[features]
+hooks = true
+memories = true
 
-In Codex, run:
+[marketplaces.local]
+source_type = "local"
+source = "/Users/<you>/.codex/local-marketplaces/ccm"
 
-```text
-/mcp
+[plugins."cognitive-context-manager@local"]
+enabled = true
 ```
 
-Confirm `cognitive-context-manager` is active.
+Older Codex builds used `codex_hooks = true`; current Codex Desktop expects `hooks = true`.
 
-## Verify Skill
+## Verify
 
-In Codex, run:
+In Codex:
 
 ```text
 /skills
+/mcp
 ```
 
-Confirm `cognitive-context` is visible.
+You should see the `cognitive-context` skill and the `cognitive-context-manager` MCP server.
+
+From Terminal:
+
+```bash
+cd ~/.codex/local-marketplaces/ccm/plugins/cognitive-context-manager
+node dist/cli/ccm.js doctor
+node dist/cli/ccm.js report effectiveness --since 1h --format markdown
+```

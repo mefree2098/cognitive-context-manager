@@ -7,7 +7,7 @@ It is meant to support long Codex flows without dumping raw transcripts into the
 ## What It Provides
 
 - Codex plugin manifest in `.codex-plugin/plugin.json`
-- Lifecycle hooks in `hooks/hooks.json`
+- Lifecycle hooks in root `hooks.json`, mirrored in `hooks/hooks.json`
 - MCP server in `src/mcp/server.ts`
 - Skill instructions in `skills/cognitive-context/SKILL.md`
 - SQLite storage at `~/.codex/cognitive-context-manager/ccm.sqlite`
@@ -19,22 +19,31 @@ It is meant to support long Codex flows without dumping raw transcripts into the
 
 ## Quick Start
 
+For Codex Desktop, the easiest path is the local-plugin installer:
+
+```bash
+git clone https://github.com/mefree2098/cognitive-context-manager.git
+cd cognitive-context-manager
+./scripts/install-local-plugin.sh
+```
+
+Then quit and reopen Codex Desktop, select the Local marketplace if needed, and enable Cognitive Context Manager. The installer copies the plugin into `~/.codex/local-marketplaces/ccm`, builds it, initializes local storage, enables `hooks = true` and `memories = true`, and runs `ccm doctor`.
+
+To create a shareable bundle for another Mac:
+
+```bash
+npm run package:local
+```
+
+See [docs/colleague-trial.md](docs/colleague-trial.md) for the full colleague handoff, verification steps, and troubleshooting.
+
+For development:
+
 ```bash
 npm install
-npm run build
 npm run check
-node dist/cli/ccm.js init
 node dist/cli/ccm.js doctor
 ```
-
-Enable Codex hooks:
-
-```toml
-[features]
-codex_hooks = true
-```
-
-Add the plugin to a local marketplace entry pointing at this directory, then restart Codex and verify the `cognitive-context` skill and `cognitive-context-manager` MCP server are visible.
 
 ## Core MCP Tools
 

@@ -23,7 +23,7 @@ import { registerUiCommand } from "./commands/ui.js";
 
 export function buildCli(): Command {
   const program = new Command();
-  program.name("ccm").description("Cognitive Context Manager for Codex").version("0.3.0");
+  program.name("ccm").description("Cognitive Context Manager for Codex").version("0.3.1");
 
   registerInitCommand(program);
   registerDoctorCommand(program);

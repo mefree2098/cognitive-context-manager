@@ -11,7 +11,7 @@ Common checks:
 - Node must be 20 or newer.
 - The database path must be writable.
 - SQLite must support FTS5.
-- `.codex-plugin/plugin.json`, `.mcp.json`, and `hooks/hooks.json` must parse.
+- `.codex-plugin/plugin.json`, `.mcp.json`, root `hooks.json`, and `hooks/hooks.json` must parse.
 - `dist/mcp/server.js` and `dist/hooks/hook-entry.js` must exist after build.
 
 If hooks fail, Codex should continue working. Hook errors are logged to `$CCM_HOME/logs/ccm.log` with secrets redacted.

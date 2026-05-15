@@ -8,3 +8,4 @@ coverage/
 *.sqlite-wal
 ccm-export.json
 bench/results/
+release/

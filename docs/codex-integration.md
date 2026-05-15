@@ -8,7 +8,7 @@ The MCP server config lives at `.mcp.json` and runs:
 node ./dist/mcp/server.js
 ```
 
-Hook configuration lives at `hooks/hooks.json` and calls:
+Hook configuration is published at the plugin-root `hooks.json` for Codex discovery and mirrored at `hooks/hooks.json` for source organization. It calls:
 
 ```bash
 node ./dist/hooks/hook-entry.js <LifecycleEvent>

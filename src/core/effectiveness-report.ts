@@ -58,6 +58,9 @@ export interface EffectivenessReport {
   reliability: {
     hookFailuresLogged: number;
     mcpFailuresLogged: number;
+    explicitMcpRecords: number;
+    passiveHookEvents: number;
+    captureMode: "none" | "explicit_mcp_only" | "passive_hooks_only" | "explicit_mcp_and_passive_hooks";
     suspectedSecrets: number;
   };
   projects: Array<{
@@ -93,6 +96,7 @@ interface TextRow {
   project_name?: string;
   root_path?: string;
   session_id?: string;
+  event_type?: string;
   text: string;
   created_at: string;
 }
@@ -107,11 +111,13 @@ interface ProjectAggregateRow {
 const CHECKPOINT_FILE_REGEX = /\b(?:page[_ -]?\d{1,4}\.(?:png|jpg|jpeg)|page[_ -]?\d{1,4}|title_page\.(?:png|jpg|jpeg)|contact_sheet[^ \n]*)\b/gi;
 const CHECKPOINT_REGEX = /\b(?:page[_ -]?\d{1,4}\.(?:png|jpg|jpeg)|page[_ -]?\d{1,4}|title_page\.(?:png|jpg|jpeg)|contact_sheet[^ \n]*|checkpoint|last confirmed|confirmed on disk|disk confirms|filesystem checkpoint)\b/gi;
 const RESUME_REGEX = /\b(?:resume|resuming|resumed|continue from|pick(?:ed)? up|restart(?:ed)? from|recover(?:ed|y|ing)?|handoff|session handoff)\b/i;
-const RECOVERY_REGEX = /\b(?:recovered|resumed|continu(?:e|ed|ing)|verified on disk|disk confirms|last confirmed|checkpoint|handoff)\b/i;
-const FAILURE_REGEX = /\b(?:fail(?:ed|ure)?|error|crash(?:ed)?|die(?:d|s)?|chok(?:e|ed|es|ing)|timeout|timed out|interrupted|stuck|loop(?:ing)?|reconnect|disconnect|blocked)\b/i;
+const RECOVERY_REGEX = /\b(?:recovered|recovery|resumed|resuming|continued from|verified on disk|disk confirms|last confirmed|picked up)\b/i;
+const FAILURE_SIGNAL_REGEX = /\b(?:failure checkpoint|failed because|failed with|command failed|build failed|test failed|tests failed|crash(?:ed)?|die(?:d|s)?|chok(?:e|ed|es|ing)|timeout|timed out|interrupted|stuck|loop(?:ing)?|reconnect|disconnect|blocked|rejected)\b/i;
+const NEGATED_FAILURE_REGEX = /\b(?:no|without|zero)\s+(?:warning|warnings|error|errors|failure|failures)\b|warning-free|error-free|clean-builds?|succeeded with no|no warning\/error|no error matches/i;
 const LONG_RUNNING_REGEX = /\b(?:long[- ]running|full manga|volume|batch|pages? \d{1,4}|\d{1,4}[- ]page|production run|checkpoint-heavy)\b/i;
 const FILESYSTEM_VERIFY_REGEX = /\b(?:disk confirms|confirmed on disk|verified on disk|filesystem|finder verification|ls confirms|reading image_source_map|source_map)\b/i;
 const SECRET_REGEX = /\b(?:redacted:[a-z0-9_-]+|REDACTED_[A-Z0-9_]+|(?:api[_ -]?key|token|secret|password|private[_ -]?key)\s*[:=]|sk-[A-Za-z0-9_-]{16,})\b/i;
+const EXPLICIT_MCP_SOURCE_REGEX = /\b(?:record_decision|compact_session|get_working_context|get_effectiveness_report)\b/;
 
 export class EffectivenessReportService {
   constructor(
@@ -121,7 +127,7 @@ export class EffectivenessReportService {
 
   report(options: EffectivenessReportOptions = {}): EffectivenessReport {
     const windowStart = parseSince(options.since ?? "7d");
-    const projectId = options.projectId ?? this.resolveProjectId(options.projectName);
+    const projectId = options.projectId;
     const sampleLimit = options.sampleLimit ?? 5;
     const filter = buildFilter(windowStart, projectId, projectId ? undefined : options.projectName);
     const textRows = this.textRows(filter);
@@ -129,9 +135,14 @@ export class EffectivenessReportService {
     const resilience = this.resilience(textRows);
     const dividend = this.filteredDividend(filter);
     const projects = this.projectAggregates(filter, textRows);
+    const passiveHookEvents = summary.hookEvents;
+    const explicitMcpRecords = this.explicitMcpRecords(filter);
     const reliability = {
       hookFailuresLogged: this.countLogMatches(/Hook .*failure|Hook failed/i),
       mcpFailuresLogged: this.countLogMatches(/MCP server failed/i),
+      explicitMcpRecords,
+      passiveHookEvents,
+      captureMode: captureMode(explicitMcpRecords, passiveHookEvents),
       suspectedSecrets: textRows.filter((row) => SECRET_REGEX.test(row.text)).length
     };
     const effectiveness = {
@@ -144,9 +155,9 @@ export class EffectivenessReportService {
       contextActivationRate: summary.sessionsObserved ? round(summary.contextBriefsGenerated / summary.sessionsObserved, 2) : 0
     };
     const evidence = {
-      checkpointSamples: samples(textRows, CHECKPOINT_REGEX, sampleLimit),
+      checkpointSamples: samples(textRows, (row) => hasRegex(row.text, CHECKPOINT_REGEX), sampleLimit),
       recoverySamples: samples(textRows, RECOVERY_REGEX, sampleLimit),
-      failureSamples: samples(textRows, FAILURE_REGEX, sampleLimit)
+      failureSamples: samples(textRows, isFailureSignal, sampleLimit)
     };
     return {
       generatedAt: new Date().toISOString(),
@@ -202,6 +213,9 @@ export class EffectivenessReportService {
       "",
       "## Reliability",
       "",
+      `- Explicit MCP records captured: ${report.reliability.explicitMcpRecords}`,
+      `- Passive hook events captured: ${report.reliability.passiveHookEvents}`,
+      `- Capture mode: ${report.reliability.captureMode}`,
       `- Hook failures logged: ${report.reliability.hookFailuresLogged}`,
       `- MCP failures logged: ${report.reliability.mcpFailuresLogged}`,
       `- Secret/redaction indicators in stored text: ${report.reliability.suspectedSecrets}`,
@@ -236,12 +250,6 @@ export class EffectivenessReportService {
     return `${lines.join("\n")}\n`;
   }
 
-  private resolveProjectId(projectName?: string): string | undefined {
-    if (!projectName) return undefined;
-    const row = this.db.prepare("SELECT id FROM projects WHERE name = ? OR root_path LIKE ? ORDER BY last_seen_at DESC LIMIT 1").get(projectName, `%${projectName}%`) as { id: string } | undefined;
-    return row?.id;
-  }
-
   private summary(filter: QueryFilter) {
     const sessionsObserved = scalar(this.db, `SELECT COUNT(*) FROM sessions ${filter.sessionWhere}`, filter.params);
     const eventsCaptured = scalar(this.db, `SELECT COUNT(*) FROM events ${filter.eventWhere}`, filter.params);
@@ -255,7 +263,7 @@ export class EffectivenessReportService {
     const openLoopsCreated = scalar(this.db, `SELECT COUNT(*) FROM open_loops ${filter.openLoopWhere}`, filter.params);
     const openLoopsResolved = scalar(this.db, `SELECT COUNT(*) FROM open_loops ${filter.openLoopWhereWith("status <> 'open'")}`, filter.params);
     const artifactsTracked = scalar(this.db, `SELECT COUNT(*) FROM artifacts ${filter.artifactWhere}`, filter.params);
-    const projectsObserved = scalar(this.db, `SELECT COUNT(DISTINCT project_id) FROM sessions ${filter.sessionWhere}`, filter.params);
+    const projectsObserved = scalar(this.db, `SELECT COUNT(DISTINCT COALESCE(p.root_path, s.project_id)) FROM sessions s LEFT JOIN projects p ON p.id = s.project_id ${filter.sessionJoinWhere}`, filter.params);
     return {
       projectsObserved,
       sessionsObserved,
@@ -276,17 +284,23 @@ export class EffectivenessReportService {
   private textRows(filter: QueryFilter): TextRow[] {
     const eventRows = this.db
       .prepare(
-        `SELECT e.project_id, p.name AS project_name, p.root_path, e.session_id, (COALESCE(e.title, '') || ' ' || e.summary) AS text, e.created_at
+        `SELECT e.project_id, p.name AS project_name, p.root_path, e.session_id, e.event_type, (COALESCE(e.title, '') || ' ' || e.summary) AS text, e.created_at
          FROM events e LEFT JOIN projects p ON p.id = e.project_id ${filter.eventJoinWhere}`
       )
       .all(filter.params) as TextRow[];
     const memoryRows = this.db
       .prepare(
-        `SELECT m.project_id, p.name AS project_name, p.root_path, m.session_id, (COALESCE(m.summary, '') || ' ' || m.content) AS text, m.created_at
+        `SELECT m.project_id, p.name AS project_name, p.root_path, m.session_id, m.event_type, (COALESCE(m.summary, '') || ' ' || m.content) AS text, m.created_at
          FROM memories m LEFT JOIN projects p ON p.id = m.project_id ${filter.memoryJoinWhere}`
       )
       .all(filter.params) as TextRow[];
     return [...eventRows, ...memoryRows].sort((left, right) => left.created_at.localeCompare(right.created_at));
+  }
+
+  private explicitMcpRecords(filter: QueryFilter): number {
+    const eventRows = this.db.prepare(`SELECT source_refs_json FROM events ${filter.eventWhere}`).all(filter.params) as Array<{ source_refs_json?: string }>;
+    const memoryRows = this.db.prepare(`SELECT source_refs_json FROM memories ${filter.memoryWhere}`).all(filter.params) as Array<{ source_refs_json?: string }>;
+    return [...eventRows, ...memoryRows].filter((row) => EXPLICIT_MCP_SOURCE_REGEX.test(String(row.source_refs_json ?? ""))).length;
   }
 
   private filteredDividend(filter: QueryFilter) {
@@ -311,41 +325,42 @@ export class EffectivenessReportService {
   }
 
   private resilience(textRows: TextRow[]) {
-    const checkpointRows = textRows.filter((row) => hasRegex(row.text, CHECKPOINT_REGEX));
+    const checkpointRows = uniqueSignalRows(textRows, (row) => hasRegex(row.text, CHECKPOINT_REGEX));
     const lastCheckpoint = [...checkpointRows]
       .reverse()
       .map((row) => checkpointFrom(row.text))
       .find((value): value is string => Boolean(value));
     return {
-      failureSignals: textRows.filter((row) => FAILURE_REGEX.test(row.text)).length,
-      recoverySignals: textRows.filter((row) => RECOVERY_REGEX.test(row.text)).length,
-      resumeSignals: textRows.filter((row) => RESUME_REGEX.test(row.text)).length,
+      failureSignals: uniqueSignalRows(textRows, isFailureSignal).length,
+      recoverySignals: uniqueSignalRows(textRows, (row) => RECOVERY_REGEX.test(row.text)).length,
+      resumeSignals: uniqueSignalRows(textRows, (row) => RESUME_REGEX.test(row.text)).length,
       checkpointSignals: checkpointRows.length,
-      filesystemVerificationSignals: textRows.filter((row) => FILESYSTEM_VERIFY_REGEX.test(row.text)).length,
+      filesystemVerificationSignals: uniqueSignalRows(textRows, (row) => FILESYSTEM_VERIFY_REGEX.test(row.text)).length,
       lastCheckpoint,
-      longRunningTaskSignals: textRows.filter((row) => LONG_RUNNING_REGEX.test(row.text)).length
+      longRunningTaskSignals: uniqueSignalRows(textRows, (row) => LONG_RUNNING_REGEX.test(row.text)).length
     };
   }
 
   private projectAggregates(filter: QueryFilter, textRows: TextRow[]) {
     const rows = this.db.prepare(`SELECT id, name, root_path, last_seen_at FROM projects ${filter.projectWhere} ORDER BY last_seen_at DESC LIMIT 10`).all(filter.params) as ProjectAggregateRow[];
-    return rows.map((row) => {
-      const projectText = textRows.filter((textRow) => textRow.project_id === row.id);
-      const checkpointRows = projectText.filter((textRow) => hasRegex(textRow.text, CHECKPOINT_REGEX));
-      const projectFilter = buildFilter(filter.windowStart, row.id);
+    const groups = projectGroups(rows);
+    return groups.map((group) => {
+      const projectText = textRows.filter((textRow) => Boolean(textRow.project_id && group.ids.includes(textRow.project_id)));
+      const checkpointRows = uniqueSignalRows(projectText, (textRow) => hasRegex(textRow.text, CHECKPOINT_REGEX));
+      const projectFilter = buildFilter(filter.windowStart, undefined, undefined, group.ids);
       return {
-        id: row.id,
-        name: row.name,
-        rootPath: row.root_path,
+        id: group.ids[0],
+        name: group.name,
+        rootPath: group.rootPath,
         sessions: scalar(this.db, `SELECT COUNT(*) FROM sessions ${projectFilter.sessionWhere}`, projectFilter.params),
         events: scalar(this.db, `SELECT COUNT(*) FROM events ${projectFilter.eventWhere}`, projectFilter.params),
         memories: scalar(this.db, `SELECT COUNT(*) FROM memories ${projectFilter.memoryWhere}`, projectFilter.params),
         contextBriefs: scalar(this.db, `SELECT COUNT(*) FROM metrics ${projectFilter.metricWhereWith("metric_name = 'context_brief_generation_latency'")}`, projectFilter.params),
         checkpointSignals: checkpointRows.length,
-        resumeSignals: projectText.filter((textRow) => RESUME_REGEX.test(textRow.text)).length,
-        failureSignals: projectText.filter((textRow) => FAILURE_REGEX.test(textRow.text)).length,
-        recoverySignals: projectText.filter((textRow) => RECOVERY_REGEX.test(textRow.text)).length,
-        lastSeenAt: row.last_seen_at,
+        resumeSignals: uniqueSignalRows(projectText, (textRow) => RESUME_REGEX.test(textRow.text)).length,
+        failureSignals: uniqueSignalRows(projectText, isFailureSignal).length,
+        recoverySignals: uniqueSignalRows(projectText, (textRow) => RECOVERY_REGEX.test(textRow.text)).length,
+        lastSeenAt: group.lastSeenAt,
         lastCheckpoint: [...checkpointRows]
           .reverse()
           .map((textRow) => checkpointFrom(textRow.text))
@@ -367,6 +382,7 @@ interface QueryFilter {
   params: Record<string, unknown>;
   windowStart: string | null;
   sessionWhere: string;
+  sessionJoinWhere: string;
   eventWhere: string;
   eventJoinWhere: string;
   memoryWhere: string;
@@ -380,7 +396,7 @@ interface QueryFilter {
   projectWhere: string;
 }
 
-function buildFilter(windowStart: string | null, projectId?: string, projectName?: string): QueryFilter {
+function buildFilter(windowStart: string | null, projectId?: string, projectName?: string, projectIds?: string[]): QueryFilter {
   const params: Record<string, unknown> = {};
   const sessionClauses: string[] = [];
   const eventClauses: string[] = [];
@@ -412,6 +428,22 @@ function buildFilter(windowStart: string | null, projectId?: string, projectName
     artifactClauses.push("project_id = @projectId");
     projectClauses.push("id = @projectId");
   }
+  if (!projectId && projectIds?.length) {
+    const placeholders = projectIds.map((id, index) => {
+      const key = `projectId${index}`;
+      params[key] = id;
+      return `@${key}`;
+    });
+    const scopedProjectIds = `project_id IN (${placeholders.join(", ")})`;
+    sessionClauses.push(scopedProjectIds);
+    eventClauses.push(scopedProjectIds);
+    memoryClauses.push(scopedProjectIds);
+    metricClauses.push(scopedProjectIds);
+    traceClauses.push(scopedProjectIds);
+    openLoopClauses.push(scopedProjectIds);
+    artifactClauses.push(scopedProjectIds);
+    projectClauses.push(`id IN (${placeholders.join(", ")})`);
+  }
   if (!projectId && projectName) {
     params.projectName = projectName;
     params.projectNameLike = `%${projectName}%`;
@@ -429,6 +461,7 @@ function buildFilter(windowStart: string | null, projectId?: string, projectName
     params,
     windowStart,
     sessionWhere: where(sessionClauses),
+    sessionJoinWhere: prefixedWhere(sessionClauses, "s"),
     eventWhere: where(eventClauses),
     eventJoinWhere: prefixedWhere(eventClauses, "e"),
     memoryWhere: where(memoryClauses),
@@ -471,6 +504,62 @@ function hasRegex(text: string, pattern: RegExp): boolean {
   return pattern.test(text);
 }
 
+function isFailureSignal(row: TextRow): boolean {
+  if (row.event_type === "failure") return true;
+  if (!FAILURE_SIGNAL_REGEX.test(row.text)) return false;
+  FAILURE_SIGNAL_REGEX.lastIndex = 0;
+  return !NEGATED_FAILURE_REGEX.test(row.text);
+}
+
+function captureMode(explicitMcpRecords: number, passiveHookEvents: number): EffectivenessReport["reliability"]["captureMode"] {
+  if (explicitMcpRecords > 0 && passiveHookEvents > 0) return "explicit_mcp_and_passive_hooks";
+  if (explicitMcpRecords > 0) return "explicit_mcp_only";
+  if (passiveHookEvents > 0) return "passive_hooks_only";
+  return "none";
+}
+
+function projectGroups(rows: ProjectAggregateRow[]): Array<{ ids: string[]; name: string; rootPath?: string; lastSeenAt: string }> {
+  const groups = new Map<string, { ids: string[]; name: string; rootPath?: string; lastSeenAt: string }>();
+  for (const row of rows) {
+    const key = row.root_path ? `root:${row.root_path}` : `id:${row.id}`;
+    const existing = groups.get(key);
+    if (existing) {
+      existing.ids.push(row.id);
+      if (row.last_seen_at > existing.lastSeenAt) {
+        existing.name = row.name;
+        existing.lastSeenAt = row.last_seen_at;
+      }
+      continue;
+    }
+    groups.set(key, { ids: [row.id], name: row.name, rootPath: row.root_path, lastSeenAt: row.last_seen_at });
+  }
+  return [...groups.values()].sort((left, right) => right.lastSeenAt.localeCompare(left.lastSeenAt)).slice(0, 10);
+}
+
+function uniqueSignalRows(rows: TextRow[], matcher: (row: TextRow) => boolean): TextRow[] {
+  const seen = new Set<string>();
+  return rows.filter((row) => {
+    if (!matcher(row)) return false;
+    const key = signalKey(row);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function signalKey(row: TextRow): string {
+  const words = row.text
+    .replace(/^Decision recorded\s+/i, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase()
+    .split(" ");
+  const half = words.length / 2;
+  const compactWords =
+    Number.isInteger(half) && words.slice(0, half).join(" ") === words.slice(half).join(" ") ? words.slice(0, half) : words;
+  return `${row.project_id ?? "unknown"}:${compactWords.join(" ").slice(0, 300)}`;
+}
+
 function checkpointFrom(text: string): string | undefined {
   CHECKPOINT_FILE_REGEX.lastIndex = 0;
   const fileMatches = [...text.matchAll(CHECKPOINT_FILE_REGEX)].map((match) => match[0]);
@@ -480,9 +569,8 @@ function checkpointFrom(text: string): string | undefined {
   return matches.at(-1);
 }
 
-function samples(rows: TextRow[], pattern: RegExp, limit: number): string[] {
-  return rows
-    .filter((row) => hasRegex(row.text, pattern))
+function samples(rows: TextRow[], matcher: RegExp | ((row: TextRow) => boolean), limit: number): string[] {
+  return uniqueSignalRows(rows, (row) => (matcher instanceof RegExp ? hasRegex(row.text, matcher) : matcher(row)))
     .slice(-limit)
     .map((row) => `${row.project_name ?? "unknown"}: ${trim(row.text, 180)}`);
 }
@@ -534,10 +622,16 @@ function publishReadiness(
     score += 15;
     strengths.push("Resume/checkpoint signals are visible for long-running work.");
   } else gaps.push("No resume/checkpoint evidence detected yet.");
-  if (reliability.hookFailuresLogged === 0 && reliability.mcpFailuresLogged === 0) {
-    score += 10;
-    strengths.push("No hook or MCP failures are logged locally.");
-  } else gaps.push("Hook or MCP failures are present in local logs.");
+  if (reliability.mcpFailuresLogged === 0 && reliability.explicitMcpRecords > 0) {
+    score += 8;
+    strengths.push("Explicit MCP record capture is working.");
+  } else if (reliability.mcpFailuresLogged > 0) gaps.push("MCP failures are present in local logs.");
+  else gaps.push("No explicit MCP records were captured.");
+  if (reliability.passiveHookEvents > 0 && reliability.hookFailuresLogged === 0) {
+    score += 5;
+    strengths.push("Passive hook capture is verified.");
+  } else if (reliability.hookFailuresLogged > 0) gaps.push("Hook failures are present in local logs.");
+  else gaps.push("No passive hook events were captured in this window.");
   if (reliability.suspectedSecrets === 0) {
     score += 5;
     strengths.push("No obvious secret material appears in stored report text.");
