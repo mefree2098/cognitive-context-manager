@@ -15,6 +15,7 @@ It is meant to support long Codex flows without dumping raw transcripts into the
 - Local-only deterministic FTS retrieval
 - Secret redaction before every memory write
 - Post-MVP trace explainability, schema safety, metrics, optional embeddings, daemon jobs, encrypted file sync, AGENTS.md suggestions, hygiene/quarantine, benchmarks, and localhost UI
+- Effectiveness reporting with passive-hook recency, memory-pressure, checkpoint/resume, and context-dividend signals
 - Adaptive Agent Guidance in CCM-owned `CCM_AGENTS.md`, with audit history, pending patches, rollback, and compact context-brief injection
 
 ## Quick Start

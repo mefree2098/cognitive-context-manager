@@ -20,10 +20,11 @@ import { registerStatusCommand } from "./commands/status.js";
 import { registerSyncCommand } from "./commands/sync.js";
 import { registerTraceCommand } from "./commands/trace.js";
 import { registerUiCommand } from "./commands/ui.js";
+import { isMainModule } from "../runtime/is-main.js";
 
 export function buildCli(): Command {
   const program = new Command();
-  program.name("ccm").description("Cognitive Context Manager for Codex").version("0.3.1");
+  program.name("ccm").description("Cognitive Context Manager for Codex").version("0.3.2");
 
   registerInitCommand(program);
   registerDoctorCommand(program);
@@ -49,6 +50,6 @@ export function buildCli(): Command {
   return program;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMainModule(import.meta.url)) {
   buildCli().parse(process.argv);
 }

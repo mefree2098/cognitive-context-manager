@@ -138,7 +138,51 @@ describe("post-MVP features", () => {
       expect(report.reliability.explicitMcpRecords).toBeGreaterThan(0);
       expect(report.reliability.passiveHookEvents).toBe(0);
       expect(report.reliability.captureMode).toBe("explicit_mcp_only");
-      expect(report.publishReadiness.gaps).toContain("No passive hook events were captured in this window.");
+      expect(report.publishReadiness.gaps).toContain("No passive hook events have been observed yet.");
+    } finally {
+      context.db.close();
+    }
+  });
+
+  it("reports stale passive hooks and memory pressure without overstating readiness", () => {
+    const context = openDb(repo);
+    try {
+      const service = new CcmService({ db: context.db, repoPath: repo });
+      const { project, session } = service.ensureProjectSession(repo, "cognitive-context-manager");
+      const staleHookAt = new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString();
+      context.db
+        .prepare(
+          `INSERT INTO trace_entries(id, project_id, session_id, trace_type, title, payload_json, created_at)
+           VALUES ('trace_stale_hook', ?, ?, 'hook', 'UserPromptSubmit', '{}', ?)`
+        )
+        .run(project.id, session.id, staleHookAt);
+
+      for (let index = 0; index < 320; index += 1) {
+        service.memories.create({
+          projectId: project.id,
+          sessionId: session.id,
+          memoryType: "semantic",
+          content: `Repeated historical handoff ${index}: this long memory should create pressure but should not be counted as injected unless retrieval selected it. ${"context ".repeat(20)}`
+        });
+      }
+      service.recordDecision({
+        projectId: project.id,
+        decision: "Explicit MCP report decision should be counted separately from stale passive hooks.",
+        source: "codex"
+      });
+      service.getWorkingContext({ task: "audit CCM report quality", repoPath: repo, projectName: "cognitive-context-manager" });
+
+      const report = new EffectivenessReportService(context.db, loadConfig(repo)).report({ since: "all", projectName: "cognitive-context-manager" });
+      expect(report.reliability.passiveHookEvents).toBe(1);
+      expect(report.reliability.passiveHookStatus).toBe("stale");
+      expect(report.reliability.latestPassiveHookAt).toBe(staleHookAt);
+      expect(report.reliability.explicitMcpRecords).toBeGreaterThan(0);
+      expect(report.publishReadiness.gaps.some((gap) => gap.includes("Passive hook capture is stale"))).toBe(true);
+      expect(report.publishReadiness.strengths).not.toContain("Passive hook capture is verified.");
+      expect(["high", "critical"]).toContain(report.memoryPressure.level);
+      expect(report.memoryPressure.recommendations.length).toBeGreaterThan(0);
+      expect(report.effectiveness.estimatedInjectedMemoryTokens).toBeLessThan(report.memoryPressure.estimatedActiveMemoryTokens);
+      expect(new EffectivenessReportService(context.db, loadConfig(repo)).renderMarkdown(report)).toContain("## Memory Pressure");
     } finally {
       context.db.close();
     }

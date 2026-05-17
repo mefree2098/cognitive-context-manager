@@ -81,7 +81,11 @@ SOURCE_REAL="$(cd "$SOURCE_DIR" && pwd -P)"
 PLUGIN_PARENT="$(dirname "$PLUGIN_DIR")"
 mkdir -p "$PLUGIN_PARENT"
 PLUGIN_REAL_PARENT="$(cd "$PLUGIN_PARENT" && pwd -P)"
-PLUGIN_REAL="$PLUGIN_REAL_PARENT/$(basename "$PLUGIN_DIR")"
+if [[ -e "$PLUGIN_DIR" ]]; then
+  PLUGIN_REAL="$(cd "$PLUGIN_DIR" && pwd -P)"
+else
+  PLUGIN_REAL="$PLUGIN_REAL_PARENT/$(basename "$PLUGIN_DIR")"
+fi
 MARKETPLACE_REAL="$(cd "$MARKETPLACE_DIR" && pwd -P)"
 PLUGIN_PATH_FOR_MARKETPLACE="$PLUGIN_REAL"
 case "$PLUGIN_REAL" in
@@ -137,7 +141,9 @@ if [[ "$SKIP_NPM" -eq 0 ]]; then
     cd "$PLUGIN_DIR"
     npm ci --include=dev
     npm run build
-    npm prune --omit=dev
+    if [[ "$SOURCE_REAL" != "$PLUGIN_REAL" ]]; then
+      npm prune --omit=dev
+    fi
   )
 fi
 

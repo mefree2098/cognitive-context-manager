@@ -19,11 +19,19 @@ ccm context dividend
 ccm report effectiveness --since 7d --format markdown
 ```
 
-`ccm report effectiveness` is a local-only usefulness report for deciding whether CCM is actually helping. It combines context-brief activations, stored memories, open-loop preservation, token-savings estimates, hook/MCP reliability, and long-running task resilience signals such as resume/checkpoint/failure/recovery language. For checkpoint-heavy work such as manga generation, run:
+`ccm report effectiveness` is a local-only usefulness report for deciding whether CCM is actually helping. It combines context-brief activations, stored memories, open-loop preservation, token-savings estimates, hook/MCP reliability, memory pressure, and long-running task resilience signals such as resume/checkpoint/failure/recovery language. For checkpoint-heavy work such as manga generation, run:
 
 ```bash
 ccm report effectiveness --since all --project-name manga --format markdown
 ```
+
+Read the report conservatively:
+
+- `passiveHookStatus=recent` means passive hooks fired within the current freshness window.
+- `passiveHookStatus=stale` means hooks have fired before, but CCM is not currently proven as a silent always-on safety net.
+- `captureMode=explicit_mcp_only` is still useful, but it means value is coming from explicit skill/MCP use.
+- `memoryPressure=high` or `critical` means active memories may need hygiene/consolidation before making publishing claims.
+- Token savings are estimates; use them alongside checkpoint/resume and recovery evidence.
 
 ## Optional Embeddings
 

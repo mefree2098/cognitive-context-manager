@@ -91,6 +91,8 @@ node dist/cli/ccm.js report effectiveness --since 7d --format markdown
 Useful signals:
 
 - `captureMode` shows whether CCM is seeing explicit MCP use, passive hooks, or both.
+- `passiveHookStatus` shows whether passive hooks are recent, stale, or not yet observed.
+- `memoryPressure` warns when active memories are too bulky for clean publish-readiness claims.
 - `contextDividend` estimates how much live context was avoided by retrieving compact memory.
 - checkpoint, failure, and recovery counts show whether long-running work is becoming more resumable.
 - open-loop and decision counts show whether important state is preserved across compaction.

@@ -61,7 +61,23 @@ export interface EffectivenessReport {
     explicitMcpRecords: number;
     passiveHookEvents: number;
     captureMode: "none" | "explicit_mcp_only" | "passive_hooks_only" | "explicit_mcp_and_passive_hooks";
+    latestExplicitMcpAt?: string;
+    latestPassiveHookAt?: string;
+    explicitMcpAgeHours?: number;
+    passiveHookAgeHours?: number;
+    passiveHookStatus: "recent" | "stale" | "not_seen";
+    passiveHookCoverage: number;
     suspectedSecrets: number;
+  };
+  memoryPressure: {
+    level: "low" | "moderate" | "high" | "critical";
+    totalMemories: number;
+    activeMemories: number;
+    inactiveMemories: number;
+    estimatedActiveMemoryTokens: number;
+    retrievedMemoriesUsed: number;
+    memoryToBriefRatio: number;
+    recommendations: string[];
   };
   projects: Array<{
     id: string;
@@ -118,6 +134,7 @@ const LONG_RUNNING_REGEX = /\b(?:long[- ]running|full manga|volume|batch|pages? 
 const FILESYSTEM_VERIFY_REGEX = /\b(?:disk confirms|confirmed on disk|verified on disk|filesystem|finder verification|ls confirms|reading image_source_map|source_map)\b/i;
 const SECRET_REGEX = /\b(?:redacted:[a-z0-9_-]+|REDACTED_[A-Z0-9_]+|(?:api[_ -]?key|token|secret|password|private[_ -]?key)\s*[:=]|sk-[A-Za-z0-9_-]{16,})\b/i;
 const EXPLICIT_MCP_SOURCE_REGEX = /\b(?:record_decision|compact_session|get_working_context|get_effectiveness_report)\b/;
+const RECENT_PASSIVE_HOOK_HOURS = 48;
 
 export class EffectivenessReportService {
   constructor(
@@ -130,19 +147,31 @@ export class EffectivenessReportService {
     const projectId = options.projectId;
     const sampleLimit = options.sampleLimit ?? 5;
     const filter = buildFilter(windowStart, projectId, projectId ? undefined : options.projectName);
+    const recencyFilter = buildFilter(null, projectId, projectId ? undefined : options.projectName);
     const textRows = this.textRows(filter);
     const summary = this.summary(filter);
     const resilience = this.resilience(textRows);
     const dividend = this.filteredDividend(filter);
+    const memoryPressure = this.memoryPressure(filter, dividend.retrievedMemoriesUsed, summary.contextBriefsGenerated);
     const projects = this.projectAggregates(filter, textRows);
     const passiveHookEvents = summary.hookEvents;
     const explicitMcpRecords = this.explicitMcpRecords(filter);
+    const latestPassiveHookAt = this.latestTraceAt(recencyFilter, "hook");
+    const latestExplicitMcpAt = this.latestExplicitMcpAt(recencyFilter);
+    const passiveHookAgeHours = ageHours(latestPassiveHookAt);
+    const explicitMcpAgeHours = ageHours(latestExplicitMcpAt);
     const reliability = {
       hookFailuresLogged: this.countLogMatches(/Hook .*failure|Hook failed/i),
       mcpFailuresLogged: this.countLogMatches(/MCP server failed/i),
       explicitMcpRecords,
       passiveHookEvents,
       captureMode: captureMode(explicitMcpRecords, passiveHookEvents),
+      latestExplicitMcpAt,
+      latestPassiveHookAt,
+      explicitMcpAgeHours,
+      passiveHookAgeHours,
+      passiveHookStatus: passiveHookStatus(latestPassiveHookAt, passiveHookAgeHours),
+      passiveHookCoverage: summary.contextBriefsGenerated ? round(passiveHookEvents / summary.contextBriefsGenerated, 3) : passiveHookEvents > 0 ? 1 : 0,
       suspectedSecrets: textRows.filter((row) => SECRET_REGEX.test(row.text)).length
     };
     const effectiveness = {
@@ -168,9 +197,10 @@ export class EffectivenessReportService {
       effectiveness,
       resilience,
       reliability,
+      memoryPressure,
       projects,
       evidence,
-      publishReadiness: publishReadiness(summary, effectiveness, resilience, reliability)
+      publishReadiness: publishReadiness(summary, effectiveness, resilience, reliability, memoryPressure)
     };
   }
 
@@ -202,6 +232,16 @@ export class EffectivenessReportService {
       `- Stale/superseded memories excluded: ${report.effectiveness.staleOrSupersededMemoriesExcluded}`,
       `- Context activation rate: ${report.effectiveness.contextActivationRate} briefs/session`,
       "",
+      "## Memory Pressure",
+      "",
+      `- Level: ${report.memoryPressure.level}`,
+      `- Active memories: ${report.memoryPressure.activeMemories}/${report.memoryPressure.totalMemories}`,
+      `- Estimated active memory tokens: ${report.memoryPressure.estimatedActiveMemoryTokens}`,
+      `- Retrieved memories used: ${report.memoryPressure.retrievedMemoriesUsed}`,
+      `- Memory-to-brief ratio: ${report.memoryPressure.memoryToBriefRatio}`,
+      "Recommendations:",
+      ...bulletList(report.memoryPressure.recommendations),
+      "",
       "## Long-Running Task Resilience",
       "",
       `- Failure signals: ${report.resilience.failureSignals}`,
@@ -216,6 +256,10 @@ export class EffectivenessReportService {
       `- Explicit MCP records captured: ${report.reliability.explicitMcpRecords}`,
       `- Passive hook events captured: ${report.reliability.passiveHookEvents}`,
       `- Capture mode: ${report.reliability.captureMode}`,
+      `- Latest explicit MCP record: ${report.reliability.latestExplicitMcpAt ?? "none detected"}`,
+      `- Latest passive hook event: ${report.reliability.latestPassiveHookAt ?? "none detected"}`,
+      `- Passive hook status: ${report.reliability.passiveHookStatus}${typeof report.reliability.passiveHookAgeHours === "number" ? ` (${report.reliability.passiveHookAgeHours}h old)` : ""}`,
+      `- Passive hook coverage: ${report.reliability.passiveHookCoverage} hook traces/context brief`,
       `- Hook failures logged: ${report.reliability.hookFailuresLogged}`,
       `- MCP failures logged: ${report.reliability.mcpFailuresLogged}`,
       `- Secret/redaction indicators in stored text: ${report.reliability.suspectedSecrets}`,
@@ -303,13 +347,57 @@ export class EffectivenessReportService {
     return [...eventRows, ...memoryRows].filter((row) => EXPLICIT_MCP_SOURCE_REGEX.test(String(row.source_refs_json ?? ""))).length;
   }
 
+  private latestTraceAt(filter: QueryFilter, traceType: string): string | undefined {
+    const row = this.db
+      .prepare(`SELECT created_at FROM trace_entries ${filter.traceWhereWith("trace_type = @latestTraceType")} ORDER BY created_at DESC LIMIT 1`)
+      .get({ ...filter.params, latestTraceType: traceType }) as { created_at?: string } | undefined;
+    return row?.created_at;
+  }
+
+  private latestExplicitMcpAt(filter: QueryFilter): string | undefined {
+    const rows = [
+      ...(this.db.prepare(`SELECT source_refs_json, created_at FROM events ${filter.eventWhere}`).all(filter.params) as Array<{
+        source_refs_json?: string;
+        created_at?: string;
+      }>),
+      ...(this.db.prepare(`SELECT source_refs_json, created_at FROM memories ${filter.memoryWhere}`).all(filter.params) as Array<{
+        source_refs_json?: string;
+        created_at?: string;
+      }>)
+    ];
+    return rows
+      .filter((row) => EXPLICIT_MCP_SOURCE_REGEX.test(String(row.source_refs_json ?? "")) && typeof row.created_at === "string")
+      .map((row) => String(row.created_at))
+      .sort()
+      .at(-1);
+  }
+
   private filteredDividend(filter: QueryFilter) {
     const memories = this.db
-      .prepare(`SELECT content, summary, stale_status, memory_type FROM memories ${filter.memoryWhere}`)
-      .all(filter.params) as Array<{ content?: string; summary?: string; stale_status?: string; memory_type?: string }>;
+      .prepare(`SELECT id, content, summary, stale_status, memory_type FROM memories ${filter.memoryWhere}`)
+      .all(filter.params) as Array<{ id?: string; content?: string; summary?: string; stale_status?: string; memory_type?: string }>;
     const events = this.db.prepare(`SELECT summary FROM events ${filter.eventWhere}`).all(filter.params) as Array<{ summary?: string }>;
-    const injectedMemoryTokens = memories.reduce((sum, row) => sum + estimateTokens(String(row.summary ?? row.content ?? "")), 0);
-    const rawTranscriptTokensAvoided = Math.max(0, events.reduce((sum, row) => sum + estimateTokens(String(row.summary ?? "")), 0) * 3 - injectedMemoryTokens);
+    const metricRows = this.db
+      .prepare(`SELECT metadata_json FROM metrics ${filter.metricWhereWith("metric_name = 'context_brief_generation_latency'")}`)
+      .all(filter.params) as Array<{ metadata_json?: string }>;
+    const metricMetadata = metricRows.map((row) => parseMetadata(row.metadata_json));
+    const metricInjectedTokens = metricMetadata.reduce((sum, metadata) => sum + numberFromMetadata(metadata.tokens), 0);
+    const retrievalTraceRows = this.db
+      .prepare(`SELECT payload_json FROM trace_entries ${filter.traceWhereWith("trace_type = 'retrieval'")}`)
+      .all(filter.params) as Array<{ payload_json?: string }>;
+    const retrievalInjectedTokens = retrievalTraceRows.reduce((sum, row) => sum + selectedTraceTokenTotal(parseMetadata(row.payload_json)), 0);
+    const retrievedMemoryIds = new Set<string>();
+    for (const metadata of metricMetadata) {
+      const memoryIds = Array.isArray(metadata.memoryIds) ? metadata.memoryIds : [];
+      for (const memoryId of memoryIds) {
+        if (typeof memoryId === "string") retrievedMemoryIds.add(memoryId);
+      }
+    }
+    const fallbackInjectedMemoryTokens = memories.reduce((sum, row) => sum + estimateTokens(String(row.summary ?? row.content ?? "")), 0);
+    const injectedMemoryTokens = retrievalInjectedTokens > 0 ? retrievalInjectedTokens : metricInjectedTokens > 0 ? metricInjectedTokens : fallbackInjectedMemoryTokens;
+    const eventTokens = events.reduce((sum, row) => sum + estimateTokens(String(row.summary ?? "")), 0);
+    const reuseMultiplier = Math.min(4, Math.max(1, Math.log2(Math.max(metricRows.length, retrievalTraceRows.length, 1) + 1)));
+    const rawTranscriptTokensAvoided = Math.floor(eventTokens * 3 * reuseMultiplier);
     const rawLogTokensAvoided = Math.floor(rawTranscriptTokensAvoided * 0.35);
     const supersededMemoriesExcluded = memories.filter((row) => row.stale_status && row.stale_status !== "active").length;
     return {
@@ -317,10 +405,41 @@ export class EffectivenessReportService {
       rawTranscriptTokensAvoided,
       rawLogTokensAvoided,
       supersededMemoriesExcluded,
-      retrievedMemoriesUsed: memories.filter((row) => row.stale_status === "active").length,
+      retrievedMemoriesUsed: retrievedMemoryIds.size || memories.filter((row) => row.stale_status === "active").length,
       openLoopTasksPreserved: memories.filter((row) => row.memory_type === "open_loop").length,
       repeatUserRemindersDetected: memories.filter((row) => /again|from now on|remember/i.test(String(row.content ?? ""))).length,
       netEstimatedTokenSavings: rawTranscriptTokensAvoided + rawLogTokensAvoided - injectedMemoryTokens
+    };
+  }
+
+  private memoryPressure(filter: QueryFilter, retrievedMemoriesUsed: number, contextBriefsGenerated: number): EffectivenessReport["memoryPressure"] {
+    const memories = this.db
+      .prepare(`SELECT content, summary, stale_status FROM memories ${filter.memoryWhere}`)
+      .all(filter.params) as Array<{ content?: string; summary?: string; stale_status?: string }>;
+    const totalMemories = memories.length;
+    const activeMemories = memories.filter((memory) => memory.stale_status === "active").length;
+    const inactiveMemories = totalMemories - activeMemories;
+    const estimatedActiveMemoryTokens = memories
+      .filter((memory) => memory.stale_status === "active")
+      .reduce((sum, row) => sum + estimateTokens(String(row.summary ?? row.content ?? "")), 0);
+    const memoryToBriefRatio = contextBriefsGenerated ? round(activeMemories / contextBriefsGenerated, 2) : activeMemories;
+    const level = memoryPressureLevel({ activeMemories, estimatedActiveMemoryTokens, memoryToBriefRatio });
+    return {
+      level,
+      totalMemories,
+      activeMemories,
+      inactiveMemories,
+      estimatedActiveMemoryTokens,
+      retrievedMemoriesUsed,
+      memoryToBriefRatio,
+      recommendations: memoryPressureRecommendations({
+        level,
+        activeMemories,
+        inactiveMemories,
+        estimatedActiveMemoryTokens,
+        memoryToBriefRatio,
+        retrievedMemoriesUsed
+      })
     };
   }
 
@@ -518,6 +637,74 @@ function captureMode(explicitMcpRecords: number, passiveHookEvents: number): Eff
   return "none";
 }
 
+function passiveHookStatus(latestPassiveHookAt?: string, passiveHookAgeHours?: number): EffectivenessReport["reliability"]["passiveHookStatus"] {
+  if (!latestPassiveHookAt) return "not_seen";
+  return typeof passiveHookAgeHours === "number" && passiveHookAgeHours <= RECENT_PASSIVE_HOOK_HOURS ? "recent" : "stale";
+}
+
+function ageHours(iso?: string): number | undefined {
+  if (!iso) return undefined;
+  const time = new Date(iso).getTime();
+  if (!Number.isFinite(time)) return undefined;
+  return round((Date.now() - time) / (60 * 60 * 1000), 1);
+}
+
+function parseMetadata(json?: string): Record<string, unknown> {
+  if (!json) return {};
+  try {
+    const parsed = JSON.parse(json);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function numberFromMetadata(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+function selectedTraceTokenTotal(payload: Record<string, unknown>): number {
+  const selected = Array.isArray(payload.selected) ? payload.selected : [];
+  return selected.reduce((sum, item) => {
+    if (!item || typeof item !== "object") return sum;
+    return sum + numberFromMetadata((item as Record<string, unknown>).tokenEstimate);
+  }, 0);
+}
+
+function memoryPressureLevel(input: { activeMemories: number; estimatedActiveMemoryTokens: number; memoryToBriefRatio: number }): EffectivenessReport["memoryPressure"]["level"] {
+  if (input.activeMemories >= 750 || input.estimatedActiveMemoryTokens >= 75000 || input.memoryToBriefRatio >= 75) return "critical";
+  if (input.activeMemories >= 300 || input.estimatedActiveMemoryTokens >= 35000 || input.memoryToBriefRatio >= 40) return "high";
+  if (input.activeMemories >= 120 || input.estimatedActiveMemoryTokens >= 15000 || input.memoryToBriefRatio >= 20) return "moderate";
+  return "low";
+}
+
+function memoryPressureRecommendations(input: {
+  level: EffectivenessReport["memoryPressure"]["level"];
+  activeMemories: number;
+  inactiveMemories: number;
+  estimatedActiveMemoryTokens: number;
+  memoryToBriefRatio: number;
+  retrievedMemoriesUsed: number;
+}): string[] {
+  const recommendations: string[] = [];
+  if (input.level === "high" || input.level === "critical") {
+    recommendations.push("Run hygiene review/archive for stale episodic handoffs and low-salience memories before using publish-readiness claims.");
+  }
+  if (input.memoryToBriefRatio >= 20) {
+    recommendations.push("Reduce memory-to-brief pressure by consolidating repeated session handoffs into durable project-state summaries.");
+  }
+  if (input.estimatedActiveMemoryTokens >= 35000) {
+    recommendations.push("Prefer summaries and retrieval traces over retaining raw or repeated long-form memory content.");
+  }
+  if (input.inactiveMemories > 0) {
+    recommendations.push("Keep non-active memories excluded from retrieval and export examples unless explicitly requested.");
+  }
+  if (input.retrievedMemoriesUsed === 0 && input.activeMemories > 0) {
+    recommendations.push("Generate at least one working-context brief to confirm active memories are retrievable.");
+  }
+  return recommendations;
+}
+
 function projectGroups(rows: ProjectAggregateRow[]): Array<{ ids: string[]; name: string; rootPath?: string; lastSeenAt: string }> {
   const groups = new Map<string, { ids: string[]; name: string; rootPath?: string; lastSeenAt: string }>();
   for (const row of rows) {
@@ -601,7 +788,8 @@ function publishReadiness(
   summary: EffectivenessReport["summary"],
   effectiveness: EffectivenessReport["effectiveness"],
   resilience: EffectivenessReport["resilience"],
-  reliability: EffectivenessReport["reliability"]
+  reliability: EffectivenessReport["reliability"],
+  memoryPressure: EffectivenessReport["memoryPressure"]
 ): EffectivenessReport["publishReadiness"] {
   const strengths: string[] = [];
   const gaps: string[] = [];
@@ -627,19 +815,37 @@ function publishReadiness(
     strengths.push("Explicit MCP record capture is working.");
   } else if (reliability.mcpFailuresLogged > 0) gaps.push("MCP failures are present in local logs.");
   else gaps.push("No explicit MCP records were captured.");
-  if (reliability.passiveHookEvents > 0 && reliability.hookFailuresLogged === 0) {
+  if (reliability.passiveHookStatus === "recent" && reliability.hookFailuresLogged === 0) {
     score += 5;
     strengths.push("Passive hook capture is verified.");
   } else if (reliability.hookFailuresLogged > 0) gaps.push("Hook failures are present in local logs.");
-  else gaps.push("No passive hook events were captured in this window.");
+  else if (reliability.passiveHookStatus === "stale")
+    gaps.push(`Passive hook capture is stale; latest hook was ${reliability.passiveHookAgeHours ?? "unknown"} hours ago.`);
+  else gaps.push("No passive hook events have been observed yet.");
   if (reliability.suspectedSecrets === 0) {
     score += 5;
     strengths.push("No obvious secret material appears in stored report text.");
   } else gaps.push("Secret/redaction indicators should be reviewed before publishing examples.");
-  const bounded = Math.max(0, Math.min(100, score));
+  if (memoryPressure.level === "low" || memoryPressure.level === "moderate") {
+    strengths.push(`Memory pressure is ${memoryPressure.level}.`);
+  } else {
+    score -= memoryPressure.level === "critical" ? 10 : 5;
+    gaps.push(`Memory pressure is ${memoryPressure.level}; active memory volume may reduce context dividend quality.`);
+  }
+  const recencyCappedScore =
+    reliability.passiveHookStatus === "recent" ? score : Math.min(score, reliability.passiveHookStatus === "stale" ? 90 : 88);
+  const bounded = Math.max(0, Math.min(100, recencyCappedScore));
+  const verdict =
+    reliability.passiveHookStatus !== "recent" && bounded >= 80
+      ? "Strong explicit-use candidate; refresh passive-hook evidence before claiming always-on safety-net behavior."
+      : bounded >= 80
+        ? "Strong open-source candidate once documented with real examples."
+        : bounded >= 60
+          ? "Promising, but gather more real-task evidence before publishing broadly."
+          : "Needs more usage data before claiming effectiveness.";
   return {
     score: bounded,
-    verdict: bounded >= 80 ? "Strong open-source candidate once documented with real examples." : bounded >= 60 ? "Promising, but gather more real-task evidence before publishing broadly." : "Needs more usage data before claiming effectiveness.",
+    verdict,
     strengths,
     gaps
   };

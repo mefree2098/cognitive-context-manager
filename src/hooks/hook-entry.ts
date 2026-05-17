@@ -5,6 +5,7 @@ import { openDb } from "../storage/db.js";
 import { CcmService } from "../core/consolidator.js";
 import { normalizeHookPayload } from "../core/event-segmenter.js";
 import { log } from "../core/logger.js";
+import { isMainModule } from "../runtime/is-main.js";
 import type { HookEventName } from "../types/hooks.js";
 import { handleSessionStart } from "./session-start.js";
 import { handleUserPromptSubmit } from "./user-prompt-submit.js";
@@ -73,7 +74,7 @@ async function main(): Promise<void> {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMainModule(import.meta.url)) {
   main().catch((error) => {
     log("error", "Hook top-level failure", { error: error instanceof Error ? error.message : String(error) });
     process.exit(0);

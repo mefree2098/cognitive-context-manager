@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import type { Command } from "commander";
@@ -13,6 +13,7 @@ import { AdaptiveAgentGuidanceService } from "../../core/adaptive-agents.js";
 interface Check {
   name: string;
   ok: boolean;
+  level?: "pass" | "warn" | "fail";
   detail?: string;
 }
 
@@ -39,6 +40,44 @@ function checkCodexHooksFeature(): Check {
     ok: hasHooks,
     detail: hasHooks ? `${configPath} has [features].hooks = true` : hasDeprecatedHooks ? "`codex_hooks` is deprecated; use `hooks = true`" : "Add [features] hooks = true"
   };
+}
+
+function warning(name: string, detail: string): Check {
+  return { name, ok: true, level: "warn", detail };
+}
+
+function checkInstalledHookManifest(): Check {
+  const cacheRoot = join(homedir(), ".codex", "plugins", "cache", "local", "cognitive-context-manager");
+  if (!existsSync(cacheRoot)) {
+    return warning("Codex plugin cache hook manifest", "No installed local cache copy found yet; source hook manifests were checked instead.");
+  }
+  const versions = readdirSync(cacheRoot)
+    .map((name) => join(cacheRoot, name))
+    .filter((path) => existsSync(join(path, ".codex-plugin", "plugin.json")))
+    .sort();
+  const latest = versions.at(-1);
+  if (!latest) {
+    return warning("Codex plugin cache hook manifest", `${cacheRoot} exists, but no versioned plugin cache was found.`);
+  }
+  const missing = ["hooks.json", join("hooks", "hooks.json"), join("dist", "hooks", "hook-entry.js")].filter((path) => !existsSync(join(latest, path)));
+  return {
+    name: "Codex plugin cache hook manifest",
+    ok: missing.length === 0,
+    level: missing.length === 0 ? "pass" : "fail",
+    detail: missing.length ? `${latest} missing ${missing.join(", ")}` : `${latest} includes root hooks.json and hook build output`
+  };
+}
+
+function checkHookCaptureRecency(db: ReturnType<typeof openDb>["db"]): Check {
+  const row = db.prepare("SELECT created_at FROM trace_entries WHERE trace_type = 'hook' ORDER BY created_at DESC LIMIT 1").get() as { created_at?: string } | undefined;
+  if (!row?.created_at) {
+    return warning("Passive hook capture recency", "No passive hook trace has been recorded yet; reports will show explicit MCP only until Codex fires hooks.");
+  }
+  const ageHours = Math.round(((Date.now() - new Date(row.created_at).getTime()) / (60 * 60 * 1000)) * 10) / 10;
+  if (ageHours > 48) {
+    return warning("Passive hook capture recency", `Latest passive hook trace is stale: ${row.created_at} (${ageHours}h old).`);
+  }
+  return { name: "Passive hook capture recency", ok: true, level: "pass", detail: `Latest passive hook trace: ${row.created_at} (${ageHours}h old)` };
 }
 
 function tomlSection(config: string, name: string): string {
@@ -75,6 +114,8 @@ export function runDoctor(cwd = process.cwd()): Check[] {
     checks.push(checkJson(join(root, "hooks.json")));
     checks.push(checkJson(join(root, "hooks", "hooks.json")));
     checks.push(checkCodexHooksFeature());
+    checks.push(checkInstalledHookManifest());
+    checks.push(checkHookCaptureRecency(context.db));
     checks.push({
       name: "MCP build output",
       ok: existsSync(join(root, "dist", "mcp", "server.js")),
@@ -117,7 +158,8 @@ export function registerDoctorCommand(program: Command): void {
         return;
       }
       for (const check of checks) {
-        console.log(`${check.ok ? "PASS" : "FAIL"} ${check.name}${check.detail ? ` - ${check.detail}` : ""}`);
+        const label = check.level === "warn" ? "WARN" : check.ok ? "PASS" : "FAIL";
+        console.log(`${label} ${check.name}${check.detail ? ` - ${check.detail}` : ""}`);
       }
       process.exitCode = checks.every((check) => check.ok) ? 0 : 1;
     });

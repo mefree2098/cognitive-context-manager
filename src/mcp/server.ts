@@ -4,6 +4,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { CcmService } from "../core/consolidator.js";
 import { openDb } from "../storage/db.js";
 import { log } from "../core/logger.js";
+import { isMainModule } from "../runtime/is-main.js";
 import { registerCompactSession } from "./tools/compact-session.js";
 import { registerExplainMemory } from "./tools/explain-memory.js";
 import { registerExplainRetrieval } from "./tools/explain-retrieval.js";
@@ -30,7 +31,7 @@ import { registerAdaptiveAgentGuidanceTools } from "./tools/adaptive-agent-guida
 export function buildServer(service: CcmService): McpServer {
   const server = new McpServer({
     name: "cognitive-context-manager",
-    version: "0.3.0"
+    version: "0.3.2"
   });
 
   registerGetWorkingContext(server, service);
@@ -72,7 +73,7 @@ async function main(): Promise<void> {
   await server.connect(transport);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMainModule(import.meta.url)) {
   main().catch((error) => {
     log("error", "MCP server failed", { error: error instanceof Error ? error.message : String(error) });
     process.exit(1);
