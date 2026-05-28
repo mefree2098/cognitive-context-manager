@@ -442,6 +442,21 @@ describe("post-MVP features", () => {
       expect(ui.port).toBeGreaterThan(blockedPort);
       expect(ui.portShifted).toBe(true);
       expect(readUiState(config)?.url).toBe(ui.url);
+      const html = await fetch(ui.url).then((response) => response.text());
+      expect(html).toContain("Performance Dashboard");
+      expect(html).toContain("Net Token Savings");
+      expect(html).toContain("Process Embeddings");
+      expect(html).toContain("Preview Hygiene");
+      const overview = await fetch(`${ui.url}/api/overview`).then((response) => response.json()) as { embeddings?: unknown; daemon?: unknown; ui?: { url?: string } };
+      expect(overview.embeddings).toBeTruthy();
+      expect(overview.daemon).toBeTruthy();
+      expect(overview.ui?.url).toBe(ui.url);
+      const action = (await fetch(`${ui.url}/api/actions/hygiene/preview`, { method: "POST" }).then((response) => response.json())) as {
+        action?: string;
+        duplicates?: { dryRun?: boolean };
+      };
+      expect(action.action).toBe("hygiene/preview");
+      expect(action.duplicates?.dryRun).toBe(true);
     } finally {
       await ui?.close();
       context.db.close();

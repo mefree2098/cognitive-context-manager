@@ -25,7 +25,7 @@ import { isMainModule } from "../runtime/is-main.js";
 
 export function buildCli(): Command {
   const program = new Command();
-  program.name("ccm").description("Cognitive Context Manager for Codex").version("0.3.4");
+  program.name("ccm").description("Cognitive Context Manager for Codex").version("0.3.5");
 
   registerInitCommand(program);
   registerDoctorCommand(program);

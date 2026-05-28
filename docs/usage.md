@@ -101,7 +101,7 @@ ccm ui start
 ccm ui status
 ```
 
-The dashboard binds to `127.0.0.1:4388` by default and exposes overview, memory search, and context preview APIs. If `4388` is already in use, CCM scans upward and prints the actual selected URL, then stores it so `ccm ui open` and `ccm ui status` can report the live address.
+The dashboard binds to `127.0.0.1:4388` by default and exposes a top performance dashboard plus overview, memory search, and context preview APIs. The top dashboard summarizes the same effectiveness report fields used in `ccm report effectiveness`: estimated token savings, context briefs, execution continuity, readiness, passive-hook proof, memory pressure, embeddings, daemon status, and reliability. It also has action buttons for refreshing the dashboard, processing embedding jobs, previewing hygiene, and archiving duplicate compact-session handoffs without remembering CLI commands. If `4388` is already in use, CCM scans upward and prints the actual selected URL, then stores it so `ccm ui open` and `ccm ui status` can report the live address.
 
 ## Optional Encrypted File Sync
 
