@@ -287,10 +287,10 @@ export function runDoctor(cwd = process.cwd()): Check[] {
       ok: existsSync(join(root, "dist", "hooks", "hook-entry.js")),
       detail: "Run npm run build if missing"
     });
+    const fakeOpenAiKey = `OPENAI_API_KEY=${"sk-" + "test1234567890abcdefghijklmnop"}`;
     checks.push({
       name: "Secret redactor",
-      ok: containsSecret("OPENAI_API_KEY=sk-test1234567890abcdefghijklmnop") &&
-        redactSecrets("OPENAI_API_KEY=sk-test1234567890abcdefghijklmnop").text.includes("[REDACTED_")
+      ok: containsSecret(fakeOpenAiKey) && redactSecrets(fakeOpenAiKey).text.includes("[REDACTED_")
     });
     const config = loadConfig(cwd);
     const embedding = new EmbeddingService(context.db, config).status();

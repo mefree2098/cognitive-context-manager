@@ -154,11 +154,11 @@ describe("post-MVP features", () => {
     const context = openDb(repo);
     try {
       const service = new CcmService({ db: context.db, repoPath: repo });
-      const { project } = service.ensureProjectSession(repo, "RecipeVault");
+      const { project } = service.ensureProjectSession(repo, "SampleApp");
       const upserted = service.projects.upsert({
         ...project,
         id: "project_remote_after_publish",
-        gitRemote: "https://github.com/mefree2098/RecipeVault.git"
+        gitRemote: "https://github.com/example/sample-app.git"
       });
       expect(upserted.id).toBe(project.id);
 
@@ -174,7 +174,7 @@ describe("post-MVP features", () => {
       context.db
         .prepare(
           `INSERT INTO projects(id, name, root_path, git_remote, git_branch, created_at, updated_at, last_seen_at, metadata_json)
-           VALUES (?, 'RecipeVault', ?, 'https://github.com/mefree2098/RecipeVault.git', 'main', ?, ?, ?, '{}')`
+           VALUES (?, 'SampleApp', ?, 'https://github.com/example/sample-app.git', 'main', ?, ?, ?, '{}')`
         )
         .run(legacyProjectId, repo, now, now, now);
       context.db
@@ -188,9 +188,9 @@ describe("post-MVP features", () => {
         decision: "Build failure checkpoint: first xcodebuild failed because ContentView used an unavailable initializer.",
         source: "codex"
       });
-      service.getWorkingContext({ task: "resume RecipeVault QA", repoPath: repo, projectName: "RecipeVault" });
+      service.getWorkingContext({ task: "resume SampleApp QA", repoPath: repo, projectName: "SampleApp" });
 
-      const report = new EffectivenessReportService(context.db, loadConfig(repo)).report({ since: "all", projectName: "RecipeVault" });
+      const report = new EffectivenessReportService(context.db, loadConfig(repo)).report({ since: "all", projectName: "SampleApp" });
       expect(report.summary.projectsObserved).toBe(1);
       expect(report.summary.sessionsObserved).toBe(2);
       expect(report.projects).toHaveLength(1);
@@ -310,39 +310,39 @@ describe("post-MVP features", () => {
   });
 
   it("attributes cross-project loops, maintains rolling state, and records explicit outcomes", () => {
-    const audiobookRepo = mkdtempSync(join(tmpdir(), "ccm-audiobook-"));
+    const sampleRepo = mkdtempSync(join(tmpdir(), "ccm-sample-project-"));
     const context = openDb(repo);
     try {
       const service = new CcmService({ db: context.db, repoPath: repo });
-      const audiobook = service.ensureProjectSession(audiobookRepo, "audiobook");
+      const sampleProject = service.ensureProjectSession(sampleRepo, "sample-project");
       service.ensureProjectSession(repo, "cognitive-context-manager");
 
       const loop = service.recordOpenLoop({
-        title: "Complete Audiobook public install",
-        description: "Audiobook installer still needs to run and audiobook.ntechr.com does not resolve yet.",
+        title: "Complete sample-project public install",
+        description: "sample-project installer still needs to run and sample.example does not resolve yet.",
         priority: 2
       });
-      expect(loop.projectId).toBe(audiobook.project.id);
+      expect(loop.projectId).toBe(sampleProject.project.id);
 
       service.recordDecision({
-        projectId: audiobook.project.id,
-        decision: "Audiobook tests passed, deployed to production, and QA verified on the public install.",
+        projectId: sampleProject.project.id,
+        decision: "sample-project tests passed, deployed to production, and QA verified on the public install.",
         source: "codex"
       });
 
       const state = context.db
         .prepare("SELECT content FROM memories WHERE project_id = ? AND stale_status = 'active' AND tags_json LIKE '%project_state%'")
-        .get(audiobook.project.id) as { content?: string } | undefined;
-      expect(state?.content).toContain("Project: audiobook");
+        .get(sampleProject.project.id) as { content?: string } | undefined;
+      expect(state?.content).toContain("Project: sample-project");
       expect(state?.content).toContain("Last verified state");
 
-      const report = new EffectivenessReportService(context.db, loadConfig(repo)).report({ since: "all", projectName: "audiobook" });
+      const report = new EffectivenessReportService(context.db, loadConfig(repo)).report({ since: "all", projectName: "sample-project" });
       expect(report.executionImpact.outcomeSignals.tests_passed).toBeGreaterThan(0);
       expect(report.executionImpact.outcomeSignals.deployed).toBeGreaterThan(0);
       expect(report.executionImpact.outcomeSignals.qa_verified).toBeGreaterThan(0);
     } finally {
       context.db.close();
-      rmSync(audiobookRepo, { recursive: true, force: true });
+      rmSync(sampleRepo, { recursive: true, force: true });
     }
   });
 
@@ -469,13 +469,14 @@ describe("post-MVP features", () => {
     try {
       const service = new CcmService({ db: context.db, repoPath: repo });
       const project = service.ensureProjectSession(repo).project;
-      service.memories.create({ projectId: project.id, memoryType: "safety", content: "API key was pasted: OPENAI_API_KEY=sk-test1234567890abcdefghijklmnop" });
+      const fakeOpenAiKey = "sk-" + "test1234567890abcdefghijklmnop";
+      service.memories.create({ projectId: project.id, memoryType: "safety", content: `API key was pasted: OPENAI_API_KEY=${fakeOpenAiKey}` });
       const brief = service.getWorkingContext({ task: "api key", repoPath: repo }).working_context_brief;
       expect(brief).toContain("[REDACTED_");
-      expect(brief).not.toContain("sk-test1234567890abcdefghijklmnop");
+      expect(brief).not.toContain(fakeOpenAiKey);
       const pushed = new SyncService(context.db, loadConfig(repo)).push(project.id);
       const bundle = readFileSync(pushed.path, "utf8");
-      expect(bundle).not.toContain("sk-test1234567890abcdefghijklmnop");
+      expect(bundle).not.toContain(fakeOpenAiKey);
     } finally {
       context.db.close();
     }

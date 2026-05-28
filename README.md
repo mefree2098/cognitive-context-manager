@@ -1,8 +1,15 @@
 # Cognitive Context Manager
 
+[![CI](https://github.com/mefree2098/cognitive-context-manager/actions/workflows/ci.yml/badge.svg)](https://github.com/mefree2098/cognitive-context-manager/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 Cognitive Context Manager is a local-first Codex plugin that captures session events, consolidates them into typed memories, and exposes compact working-context briefs through MCP tools.
 
-It is meant to support long Codex flows without dumping raw transcripts into the live prompt. Hooks passively capture meaningful events. The MCP server lets Codex actively retrieve context, search memories, record decisions, and compact a session handoff.
+It is meant to support long Codex flows without dumping raw transcripts into the live prompt. The MCP server lets Codex actively retrieve context, search memories, record decisions, and compact a session handoff. Passive hook capture is available as a diagnostic/automation path, but users should verify it with `ccm doctor` and `ccm hooks watch` before treating it as an always-on safety net.
+
+## Release Status
+
+CCM is in public beta. Explicit skill/MCP use, local storage, context briefs, embeddings, hygiene, and the dashboard are the best-supported paths today. Passive hook capture depends on the Codex host environment and should be reported as verified only when `passiveHookProof=host_launch_and_trace_proven` appears in `ccm report effectiveness`.
 
 ## What It Provides
 
@@ -123,3 +130,7 @@ Advanced features fail back to SQLite + FTS or local-only behavior:
 ## Privacy
 
 CCM does not send telemetry. OpenAI embeddings are enabled by default through existing Codex auth and redact text before requests; set `embeddings.enabled=false`, `embeddings.provider=local`, or `privacy.allowCloudEmbeddings=false` for a fully local embedding path. Cloud summarization still requires explicit configuration. Secrets are redacted before storage, embedding, summarization, sync, export, and context injection. Retrieved memory is wrapped as contextual data and never outranks AGENTS.md or higher-priority Codex instructions.
+
+## Contributing And Security
+
+See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and [docs/privacy-and-security.md](docs/privacy-and-security.md) before filing issues or sending patches that touch memory, hooks, redaction, embeddings, or sync.

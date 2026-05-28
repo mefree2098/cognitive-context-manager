@@ -6,14 +6,26 @@
   "license": "MIT",
   "author": {
     "name": "Matt Freestone",
-    "email": "matt@freestonefamily.com"
+    "email": "mefree2098@users.noreply.github.com"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mefree2098/cognitive-context-manager.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mefree2098/cognitive-context-manager/issues"
+  },
+  "homepage": "https://github.com/mefree2098/cognitive-context-manager#readme",
   "keywords": [
     "codex",
     "context",
     "memory",
     "mcp",
     "hooks",
+    "local-first",
+    "agent-tools",
+    "codex-plugin",
+    "context-management",
     "long-running-agents"
   ],
   "bin": {
@@ -31,7 +43,11 @@
     "dist",
     "docs",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md",
+    "SECURITY.md",
+    "CONTRIBUTING.md",
+    "CODE_OF_CONDUCT.md"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",

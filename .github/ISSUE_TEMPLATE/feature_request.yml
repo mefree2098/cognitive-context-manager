@@ -1,0 +1,41 @@
+name: Feature Request
+description: Suggest an improvement to CCM
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What workflow or failure mode should CCM improve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What would you like CCM to do?
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Install or packaging
+        - MCP tools
+        - Hooks or passive capture
+        - Context retrieval
+        - Embeddings
+        - UI dashboard
+        - Sync
+        - Hygiene
+        - Adaptive guidance
+        - Reporting
+        - Other
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Optional notes on workarounds or different designs.

@@ -19,7 +19,7 @@ If the repository is private, add the colleague as a collaborator first or use t
 On the maintainer machine:
 
 ```bash
-cd /Users/matt/Documents/contextplugin/cognitive-context-manager
+cd cognitive-context-manager
 npm run package:local
 ```
 

@@ -1,0 +1,66 @@
+name: Bug Report
+description: Report a reproducible CCM problem
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug. Redact secrets, private memory content, logs, paths, and credentials before submitting.
+  - type: input
+    id: version
+    attributes:
+      label: CCM version
+      description: Run `ccm --version` or `node dist/cli/ccm.js --version`.
+      placeholder: "0.3.5"
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Install or packaging
+        - Codex plugin visibility
+        - MCP tools
+        - Hooks or passive capture
+        - Context retrieval
+        - Embeddings
+        - UI dashboard
+        - Sync
+        - Hygiene
+        - Adaptive guidance
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: Describe the issue and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps
+      placeholder: |
+        1. Run ...
+        2. Open ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Redacted diagnostics
+      description: Include redacted `ccm doctor`, `ccm report effectiveness`, or relevant logs.
+      render: shell
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety check
+      options:
+        - label: I removed secrets, credentials, private keys, raw personal data, and private memory content.
+          required: true

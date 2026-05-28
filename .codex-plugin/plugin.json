@@ -4,7 +4,7 @@
   "description": "Context and memory management harness for long Codex sessions.",
   "author": {
     "name": "Matt Freestone",
-    "email": "matt@freestonefamily.com"
+    "email": "mefree2098@users.noreply.github.com"
   },
   "license": "MIT",
   "keywords": [
@@ -13,6 +13,10 @@
     "memory",
     "mcp",
     "hooks",
+    "local-first",
+    "agent-tools",
+    "codex-plugin",
+    "context-management",
     "long-running-agents"
   ],
   "skills": "./skills/",
