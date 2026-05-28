@@ -1,6 +1,6 @@
 {
   "name": "cognitive-context-manager",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "Context and memory management harness for long Codex sessions.",
   "type": "module",
   "license": "MIT",

@@ -1,4 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import type { AddressInfo } from "node:net";
 import type Database from "better-sqlite3";
 import { CcmService } from "./consolidator.js";
 import { MetricsService } from "./metrics.js";
@@ -7,22 +10,135 @@ import { EffectivenessReportService } from "./effectiveness-report.js";
 import type { CcmConfig } from "../types/config.js";
 import { redactSecrets } from "./secret-redactor.js";
 
-export function startUiServer(db: Database.Database, config: CcmConfig): Promise<{ url: string; close: () => Promise<void> }> {
+export interface UiServerHandle {
+  url: string;
+  host: string;
+  port: number;
+  requestedPort: number;
+  portShifted: boolean;
+  close: () => Promise<void>;
+}
+
+export interface UiServerState {
+  url: string;
+  host: string;
+  port: number;
+  requestedPort: number;
+  portShifted: boolean;
+  startedAt: string;
+  pid: number;
+}
+
+export async function startUiServer(db: Database.Database, config: CcmConfig): Promise<UiServerHandle> {
   const host = config.ui.host || "127.0.0.1";
   if (host !== "127.0.0.1" && host !== "localhost") throw new Error("CCM UI refuses non-localhost binding by default");
-  const port = config.ui.port || 4388;
+  const requestedPort = normalizePort(config.ui.port || 4388);
+  const portScanRange = Math.max(0, Number(config.ui.portScanRange) || 0);
   const service = new CcmService({ db, repoPath: process.cwd() });
+
+  for (let offset = 0; offset <= portScanRange; offset += 1) {
+    const candidatePort = requestedPort === 0 ? 0 : requestedPort + offset;
+    try {
+      const server = await listen(service, config, host, candidatePort);
+      const address = server.address() as AddressInfo;
+      const actualPort = address.port;
+      const handle = {
+        url: `http://${host}:${actualPort}`,
+        host,
+        port: actualPort,
+        requestedPort,
+        portShifted: actualPort !== requestedPort,
+        close: () =>
+          new Promise<void>((closeResolve, closeReject) =>
+            server.close((error) => {
+              removeUiState(config);
+              if (error) closeReject(error);
+              else closeResolve();
+            })
+          )
+      };
+      writeUiState(config, handle);
+      return handle;
+    } catch (error) {
+      if (!isPortConflict(error) || offset === portScanRange || requestedPort === 0) throw error;
+    }
+  }
+
+  throw new Error(`Unable to find an available CCM UI port starting at ${requestedPort}.`);
+}
+
+export function readUiState(config: CcmConfig): UiServerState | undefined {
+  const path = uiStatePath(config);
+  if (!existsSync(path)) return undefined;
+  try {
+    const state = JSON.parse(readFileSync(path, "utf8")) as UiServerState;
+    if (!isAlive(state.pid)) return undefined;
+    return state;
+  } catch {
+    return undefined;
+  }
+}
+
+function listen(service: CcmService, config: CcmConfig, host: string, port: number): Promise<ReturnType<typeof createServer>> {
   const server = createServer((request, response) => route(request, response, service, config));
   return new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(port, host, () => {
-      resolve({
-        url: `http://${host}:${port}`,
-        close: () =>
-          new Promise((closeResolve, closeReject) => server.close((error) => (error ? closeReject(error) : closeResolve())))
-      });
+      server.off("error", reject);
+      resolve(server);
     });
   });
+}
+
+function writeUiState(config: CcmConfig, handle: Omit<UiServerHandle, "close">): void {
+  try {
+    mkdirSync(join(config.storage.home, "run"), { recursive: true });
+    const state: UiServerState = {
+      url: handle.url,
+      host: handle.host,
+      port: handle.port,
+      requestedPort: handle.requestedPort,
+      portShifted: handle.portShifted,
+      startedAt: new Date().toISOString(),
+      pid: process.pid
+    };
+    writeFileSync(uiStatePath(config), `${JSON.stringify(state, null, 2)}\n`, "utf8");
+  } catch {
+    // The dashboard should still run if its status file cannot be written.
+  }
+}
+
+function removeUiState(config: CcmConfig): void {
+  try {
+    const path = uiStatePath(config);
+    if (existsSync(path)) unlinkSync(path);
+  } catch {
+    // Best effort cleanup.
+  }
+}
+
+function uiStatePath(config: CcmConfig): string {
+  return join(config.storage.home, "run", "ui.json");
+}
+
+function normalizePort(port: number): number {
+  if (!Number.isInteger(port) || port < 0 || port > 65_535) throw new Error(`Invalid CCM UI port: ${port}`);
+  return port;
+}
+
+function isPortConflict(error: unknown): boolean {
+  if (!error || typeof error !== "object" || !("code" in error)) return false;
+  const code = (error as { code?: unknown }).code;
+  return code === "EADDRINUSE" || code === "EACCES";
+}
+
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function route(request: IncomingMessage, response: ServerResponse, service: CcmService, config: CcmConfig): void {

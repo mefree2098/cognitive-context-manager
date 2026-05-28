@@ -1,6 +1,8 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { AddressInfo } from "node:net";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { loadConfig } from "../../src/config/load-config.js";
 import { AgentsSuggestionService } from "../../src/core/agents-suggestions.js";
@@ -13,6 +15,7 @@ import { HygieneService } from "../../src/core/hygiene.js";
 import { SyncService } from "../../src/core/sync-service.js";
 import { CcmService } from "../../src/core/consolidator.js";
 import { runDoctorWithOptions } from "../../src/cli/commands/doctor.js";
+import { readUiState, startUiServer } from "../../src/core/ui-server.js";
 import { openDb } from "../../src/storage/db.js";
 
 let home: string;
@@ -421,6 +424,28 @@ describe("post-MVP features", () => {
       expect(status.dimensions).toBe(1536);
     } finally {
       context.db.close();
+    }
+  });
+
+  it("shifts the UI dashboard to an available localhost port", async () => {
+    const blocker = createServer();
+    await new Promise<void>((resolve) => blocker.listen(0, "127.0.0.1", resolve));
+    const blockedPort = (blocker.address() as AddressInfo).port;
+    const context = openDb(repo);
+    let ui: Awaited<ReturnType<typeof startUiServer>> | undefined;
+    try {
+      const config = loadConfig(repo);
+      config.ui.port = blockedPort;
+      config.ui.portScanRange = 5;
+      ui = await startUiServer(context.db, config);
+      expect(ui.requestedPort).toBe(blockedPort);
+      expect(ui.port).toBeGreaterThan(blockedPort);
+      expect(ui.portShifted).toBe(true);
+      expect(readUiState(config)?.url).toBe(ui.url);
+    } finally {
+      await ui?.close();
+      context.db.close();
+      await new Promise<void>((resolve) => blocker.close(() => resolve()));
     }
   });
 

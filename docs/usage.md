@@ -98,9 +98,10 @@ The daemon processes queues. Codex hooks and MCP tools continue working when it 
 
 ```bash
 ccm ui start
+ccm ui status
 ```
 
-The dashboard binds to `127.0.0.1:4388` by default and exposes overview, memory search, and context preview APIs.
+The dashboard binds to `127.0.0.1:4388` by default and exposes overview, memory search, and context preview APIs. If `4388` is already in use, CCM scans upward and prints the actual selected URL, then stores it so `ccm ui open` and `ccm ui status` can report the live address.
 
 ## Optional Encrypted File Sync
 

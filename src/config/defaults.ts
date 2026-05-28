@@ -90,7 +90,8 @@ export const defaultConfig: CcmConfig = {
   ui: {
     enabled: false,
     host: "127.0.0.1",
-    port: 4388
+    port: 4388,
+    portScanRange: 50
   },
   adaptiveAgents: {
     enabled: true,

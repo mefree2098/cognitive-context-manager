@@ -89,6 +89,7 @@ export interface CcmConfig {
     enabled: boolean;
     host: string;
     port: number;
+    portScanRange: number;
   };
   adaptiveAgents: {
     enabled: boolean;

@@ -115,7 +115,7 @@ Advanced features fail back to SQLite + FTS or local-only behavior:
 - Embeddings: enabled by default. CCM uses `~/.codex/auth.json` Codex ChatGPT auth for OpenAI embeddings, unless `embeddings.openai.authMode`, `embeddings.provider`, or `embeddings.enabled=false` says otherwise. If Codex auth is unavailable, it falls back to local deterministic embeddings.
 - Daemon: optional queue processor for embeddings and hygiene. Hooks and MCP work without it.
 - Sync: disabled by default. File sync writes encrypted bundles with a local key.
-- UI: optional dashboard bound to `127.0.0.1` by default through `ccm ui start`.
+- UI: optional dashboard bound to `127.0.0.1:4388` by default through `ccm ui start`; if that port is busy, CCM scans upward and reports the selected URL.
 - AGENTS.md suggestions: CCM can propose diffs, but only `ccm agents apply <id>` writes.
 - Adaptive Agent Guidance: CCM may update its own managed `~/.codex/ccm/agents/CCM_AGENTS.md`, but it never silently edits project or global `AGENTS.md` files.
 - Hygiene: archive/quarantine/tombstone workflows keep low-value or suspicious memories out of context.
