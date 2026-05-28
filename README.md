@@ -7,6 +7,37 @@ Cognitive Context Manager is a local-first Codex plugin that captures session ev
 
 It is meant to support long Codex flows without dumping raw transcripts into the live prompt. The MCP server lets Codex actively retrieve context, search memories, record decisions, and compact a session handoff. Passive hook capture is available as a diagnostic/automation path, but users should verify it with `ccm doctor` and `ccm hooks watch` before treating it as an always-on safety net.
 
+## The Idea
+
+CCM started from a simple observation: human beings do not stay coherent across long projects by remembering every word of every conversation. We keep a small working set in mind, consolidate important episodes into longer-lived memory, remember unresolved intentions, notice emotionally or operationally salient moments, and retrieve related context when a new situation resembles something we have seen before.
+
+Long-running Codex sessions need a similar support system. A model context window is more like working memory than long-term memory: it is powerful, but finite, noisy, and eventually compressed. If a session waits until the context window is nearly full before summarizing, important decisions, failed attempts, file state, and open loops can get flattened into a vague handoff. CCM tries to avoid that cliff by doing continuous micro-consolidation throughout the work.
+
+In practice, CCM gives Codex a lightweight cognitive loop around the normal chat:
+
+```text
+Codex/user activity
+  -> meaningful events are captured or explicitly recorded
+  -> events are segmented into memory capsules
+  -> important details are promoted into typed project memory
+  -> open loops, decisions, artifacts, warnings, and preferences stay queryable
+  -> Codex asks for a compact working-context brief before continuing
+  -> stale or contradictory memories are flagged instead of blindly reused
+```
+
+The plugin deliberately stores different kinds of memory instead of throwing everything into one undifferentiated bucket:
+
+- **Episodic memory:** what happened in a particular turn, run, failure, recovery, or handoff.
+- **Semantic memory:** stable project facts, decisions, and current state.
+- **Procedural memory:** durable conventions and repeated workflow rules.
+- **Open-loop memory:** unresolved tasks, blockers, questions, and next actions.
+- **Artifact memory:** file, build, test, generated-output, and checkpoint state.
+- **Safety memory:** redacted secret events, risky patterns, and protected boundaries.
+
+Retrieval is staged for the same reason human recall is contextual. Before a task, Codex can ask CCM for the current working context, project state, open loops, artifact state, or related memories. CCM then returns a bounded context brief, not a raw transcript dump. Current files, tool output, AGENTS.md, and higher-priority instructions still win; CCM memory is supporting context, not authority.
+
+The result is not a bigger context window. It is a cleaner one: less repeated re-explanation, fewer lost decisions after compaction, better resume points for long-running tasks, and a way to measure whether the memory layer is actually helping through effectiveness reports and the dashboard.
+
 ## Release Status
 
 CCM is in public beta. Explicit skill/MCP use, local storage, context briefs, embeddings, hygiene, and the dashboard are the best-supported paths today. Passive hook capture depends on the Codex host environment and should be reported as verified only when `passiveHookProof=host_launch_and_trace_proven` appears in `ccm report effectiveness`.
