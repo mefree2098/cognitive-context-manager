@@ -34,6 +34,7 @@
       "Use Cognitive Context Manager to summarize the current session state and open loops.",
       "Use Cognitive Context Manager to record this decision and keep future Codex turns aligned."
     ],
-    "brandColor": "#7C3AED"
+    "brandColor": "#7C3AED",
+    "logo": "./assets/ccm-icon-256.png"
   }
 }

@@ -1,7 +1,8 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import type { AddressInfo } from "node:net";
+import { fileURLToPath } from "node:url";
 import type Database from "better-sqlite3";
 import { CcmService } from "./consolidator.js";
 import { MetricsService } from "./metrics.js";
@@ -11,6 +12,8 @@ import { EmbeddingService } from "./embedding-provider.js";
 import { DaemonService } from "./daemon-service.js";
 import type { CcmConfig } from "../types/config.js";
 import { redactSecrets } from "./secret-redactor.js";
+
+const UI_ASSET_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../assets");
 
 export interface UiServerHandle {
   url: string;
@@ -151,6 +154,22 @@ async function route(request: IncomingMessage, response: ServerResponse, service
     await handleAction(url.pathname.slice("/api/actions/".length), response, service, config);
     return;
   }
+  if (url.pathname === "/assets/ccm-icon.png") {
+    assetResponse(response, "ccm-icon.png", "image/png");
+    return;
+  }
+  if (url.pathname === "/assets/ccm-icon-256.png") {
+    assetResponse(response, "ccm-icon-256.png", "image/png");
+    return;
+  }
+  if (url.pathname === "/assets/apple-touch-icon.png") {
+    assetResponse(response, "apple-touch-icon.png", "image/png");
+    return;
+  }
+  if (url.pathname === "/assets/favicon-32.png" || url.pathname === "/favicon.ico") {
+    assetResponse(response, "favicon-32.png", "image/png");
+    return;
+  }
   if (url.pathname === "/api/overview") {
     jsonResponse(response, {
       project: service.ensureProjectSession(process.cwd()).project,
@@ -219,11 +238,14 @@ function dashboardHtml(): string {
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Cognitive Context Manager</title>
+  <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32.png" />
+  <link rel="apple-touch-icon" sizes="180x180" href="/assets/apple-touch-icon.png" />
   <style>
     :root { color-scheme: light; }
     * { box-sizing: border-box; }
     body { margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f6f7f9; color: #17202a; }
-    header { padding: 18px 24px; background: #20242c; color: white; }
+    header { padding: 16px 24px; background: #20242c; color: white; display: flex; align-items: center; gap: 12px; }
+    header img { width: 42px; height: 42px; border-radius: 10px; flex: 0 0 auto; }
     main { padding: 24px; display: grid; gap: 16px; grid-template-columns: repeat(12, minmax(0, 1fr)); }
     section { background: white; border: 1px solid #dfe3ea; border-radius: 8px; padding: 16px; min-height: 160px; }
     h1 { font-size: 20px; margin: 0; letter-spacing: 0; }
@@ -268,7 +290,7 @@ function dashboardHtml(): string {
   </style>
 </head>
 <body>
-  <header><h1>Cognitive Context Manager</h1></header>
+  <header><img src="/assets/ccm-icon-256.png" alt="" /><h1>Cognitive Context Manager</h1></header>
   <main>
     <section class="dashboard" aria-label="CCM performance dashboard">
       <div class="dashboard-head">
@@ -444,6 +466,17 @@ function jsonResponse(response: ServerResponse, value: unknown): void {
 function htmlResponse(response: ServerResponse, value: string): void {
   response.setHeader("content-type", "text/html; charset=utf-8");
   response.end(value);
+}
+
+function assetResponse(response: ServerResponse, filename: string, contentType: string): void {
+  const path = join(UI_ASSET_ROOT, filename);
+  if (!existsSync(path)) {
+    errorResponse(response, 404, new Error(`Missing UI asset: ${filename}`));
+    return;
+  }
+  response.setHeader("content-type", contentType);
+  response.setHeader("cache-control", "public, max-age=3600");
+  response.end(readFileSync(path));
 }
 
 function errorResponse(response: ServerResponse, status: number, error: unknown): void {

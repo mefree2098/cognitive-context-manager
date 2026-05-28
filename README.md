@@ -3,6 +3,10 @@
 [![CI](https://github.com/mefree2098/cognitive-context-manager/actions/workflows/ci.yml/badge.svg)](https://github.com/mefree2098/cognitive-context-manager/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
+<p align="center">
+  <img src="assets/ccm-icon-256.png" alt="Cognitive Context Manager icon" width="128" height="128">
+</p>
+
 Cognitive Context Manager is a local-first Codex plugin that captures session events, consolidates them into typed memories, and exposes compact working-context briefs through MCP tools.
 
 It is meant to support long Codex flows without dumping raw transcripts into the live prompt. The MCP server lets Codex actively retrieve context, search memories, record decisions, and compact a session handoff. Passive hook capture is available as a diagnostic/automation path, but users should verify it with `ccm doctor` and `ccm hooks watch` before treating it as an always-on safety net.

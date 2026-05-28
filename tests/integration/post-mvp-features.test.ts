@@ -447,6 +447,11 @@ describe("post-MVP features", () => {
       expect(html).toContain("Net Token Savings");
       expect(html).toContain("Process Embeddings");
       expect(html).toContain("Preview Hygiene");
+      expect(html).toContain("/assets/favicon-32.png");
+      expect(html).toContain("/assets/ccm-icon-256.png");
+      const favicon = await fetch(`${ui.url}/assets/favicon-32.png`);
+      expect(favicon.ok).toBe(true);
+      expect(favicon.headers.get("content-type")).toContain("image/png");
       const overview = await fetch(`${ui.url}/api/overview`).then((response) => response.json()) as { embeddings?: unknown; daemon?: unknown; ui?: { url?: string } };
       expect(overview.embeddings).toBeTruthy();
       expect(overview.daemon).toBeTruthy();

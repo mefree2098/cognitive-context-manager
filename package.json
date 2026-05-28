@@ -36,6 +36,7 @@
   "files": [
     ".codex-plugin",
     ".mcp.json",
+    "assets",
     "hooks.json",
     "hooks",
     "skills",
