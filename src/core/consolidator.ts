@@ -14,6 +14,8 @@ import { AdaptiveAgentGuidanceService } from "./adaptive-agents.js";
 import { AgentsSuggestionService } from "./agents-suggestions.js";
 import { HygieneService } from "./hygiene.js";
 import { MetricsService } from "./metrics.js";
+import { recordOutcomeEvents } from "./outcome-detector.js";
+import { ProjectAttributionService } from "./project-attribution.js";
 import { SyncService } from "./sync-service.js";
 import type { EventType } from "../types/event.js";
 import type { HookResult, NormalizedHookPayload } from "../types/hooks.js";
@@ -23,6 +25,7 @@ import { buildWorkingContext, renderWorkingContextBrief, attachTokenEstimate } f
 import { ConflictResolver } from "./conflict-resolver.js";
 import { detectEventBoundary, extractEntities, looksLikeOpenLoop } from "./event-segmenter.js";
 import { hybridRank } from "./hybrid-retrieval.js";
+import { ProjectStateService } from "./project-state.js";
 import { detectProject } from "./project-detector.js";
 import { rankMemories } from "./retrieval-planner.js";
 import { redactSecrets } from "./secret-redactor.js";
@@ -70,28 +73,77 @@ export class CcmService {
     const boundary = detectEventBoundary(payload);
     const warnings: string[] = [];
     const ids: string[] = [];
+    const selfTest = payload.rawPayload.ccmSelfTest === true;
+    const attributed = selfTest
+      ? undefined
+      : new ProjectAttributionService(this.db).inferProject(
+          [payload.text, payload.command, payload.output, payload.approvalReason].filter(Boolean).join("\n"),
+          project.id
+        );
+    const activeProject = attributed?.project ?? project;
+    const activeSession =
+      activeProject.id === project.id
+        ? session
+        : this.projects.latestSession(activeProject.id) ?? this.projects.createOrResumeSession(activeProject.id);
+    const hookSourceRef = {
+      kind: "hook" as const,
+      label: payload.eventName,
+      timestamp: payload.timestamp,
+      metadata: attributed
+        ? { attributedProjectId: activeProject.id, attributedProjectName: activeProject.name, confidence: attributed.confidence, reasons: attributed.reasons }
+        : undefined
+    };
+
+    if (selfTest) {
+      const trace = this.traces.record({
+        projectId: project.id,
+        sessionId: session.id,
+        traceType: "hook",
+        title: payload.eventName,
+        payload: {
+          eventType: "self_test",
+          signals: ["self_test"],
+          salience: 0,
+          selfTest: true,
+          command: payload.command,
+          toolName: payload.toolName,
+          changedFiles: payload.changedFiles.length
+        }
+      });
+      return { ok: true, warnings, ids: [trace.id], message: `Recorded ${payload.eventName} self-test` };
+    }
 
     const event = this.events.create({
-      sessionId: session.id,
-      projectId: project.id,
+      sessionId: activeSession.id,
+      projectId: activeProject.id,
       eventType: boundary.eventType,
       title: boundary.title,
       summary: boundary.summary,
       entities: extractEntities(boundary.summary),
-      sourceRefs: [{ kind: "hook", label: payload.eventName, timestamp: payload.timestamp }],
+      sourceRefs: [hookSourceRef],
       salience: boundary.salience,
       confidence: boundary.confidence
     });
     ids.push(event.id);
+    ids.push(
+      ...recordOutcomeEvents({
+        events: this.events,
+        projectId: activeProject.id,
+        sessionId: activeSession.id,
+        text: boundary.summary,
+        sourceRefs: [{ kind: "system", label: event.id, timestamp: payload.timestamp }]
+      })
+    );
     this.traces.record({
-      projectId: project.id,
-      sessionId: session.id,
+      projectId: activeProject.id,
+      sessionId: activeSession.id,
       traceType: "hook",
       title: payload.eventName,
       payload: {
         eventType: boundary.eventType,
         signals: boundary.signals,
         salience: boundary.salience,
+        selfTest: false,
         command: payload.command,
         toolName: payload.toolName,
         changedFiles: payload.changedFiles.length
@@ -101,8 +153,8 @@ export class CcmService {
     const memoryType = memoryTypeForBoundary(boundary.eventType, boundary.signals);
     if (boundary.isBoundary && boundary.salience >= loadConfig(payload.cwd).consolidation.minSalienceToStore) {
       const memory = this.memories.create({
-        projectId: project.id,
-        sessionId: session.id,
+        projectId: activeProject.id,
+        sessionId: activeSession.id,
         memoryType,
         eventType: boundary.eventType,
         content: boundary.summary,
@@ -112,7 +164,7 @@ export class CcmService {
         retrievalCues: [payload.eventName, payload.toolName, payload.command].filter((value): value is string => Boolean(value)),
         salience: boundary.salience,
         confidence: boundary.confidence,
-        sourceRefs: [{ kind: "hook", label: payload.eventName, timestamp: payload.timestamp }]
+        sourceRefs: [hookSourceRef]
       });
       new EmbeddingService(this.db, loadConfig(payload.cwd)).queueMemory(memory.id);
       ids.push(memory.id);
@@ -122,7 +174,7 @@ export class CcmService {
       for (const file of payload.changedFiles.slice(0, 25)) {
         const hash = hashFile(file);
         const artifact = this.artifacts.upsert({
-          projectId: project.id,
+          projectId: activeProject.id,
           path: file,
           lastHash: hash,
           status: "changed",
@@ -135,12 +187,21 @@ export class CcmService {
     const meaningfulText = [payload.text, payload.output].filter(Boolean).join("\n");
     if (meaningfulText && looksLikeOpenLoop(meaningfulText) && payload.eventName === "UserPromptSubmit") {
       const loop = this.openLoops.create({
-        projectId: project.id,
-        sessionId: session.id,
+        projectId: activeProject.id,
+        sessionId: activeSession.id,
         title: inferOpenLoopTitle(meaningfulText),
         description: redactSecrets(meaningfulText).text,
         priority: /\b(urgent|blocked|critical|must)\b/i.test(meaningfulText) ? 1 : 3,
-        sourceRefs: [{ kind: "user", label: "UserPromptSubmit", timestamp: payload.timestamp }]
+        sourceRefs: [
+          {
+            kind: "user",
+            label: "UserPromptSubmit",
+            timestamp: payload.timestamp,
+            metadata: attributed
+              ? { attributedProjectId: activeProject.id, attributedProjectName: activeProject.name, confidence: attributed.confidence, reasons: attributed.reasons }
+              : undefined
+          }
+        ]
       });
       ids.push(loop.id);
     }
@@ -148,8 +209,8 @@ export class CcmService {
     if (payload.command && /\brm\s+-rf\b|git\s+push\s+--force|chmod\s+-R|chown\s+-R/i.test(payload.command)) {
       warnings.push(`High-risk command observed: ${payload.command}`);
       const memory = this.memories.create({
-        projectId: project.id,
-        sessionId: session.id,
+        projectId: activeProject.id,
+        sessionId: activeSession.id,
         memoryType: "safety",
         eventType: "tool_use",
         content: `High-risk command observed and should be reviewed carefully: ${payload.command}`,
@@ -164,7 +225,7 @@ export class CcmService {
 
     if (payload.eventName === "SessionStart") {
       new AdaptiveAgentGuidanceService(this.db, loadConfig(payload.cwd)).ensureFiles();
-      this.writeSessionBrief(payload.cwd, project.id, session.id);
+      this.writeSessionBrief(payload.cwd, activeProject.id, activeSession.id);
     }
 
     if (payload.eventName === "UserPromptSubmit" && payload.text) {
@@ -181,9 +242,10 @@ export class CcmService {
     }
 
     if (payload.eventName === "Stop") {
-      const compacted = this.compactSession({ repoPath: payload.cwd, projectId: project.id, sessionId: session.id });
+      const compacted = this.compactSession({ repoPath: payload.cwd, projectId: activeProject.id, sessionId: activeSession.id });
       ids.push(...compacted.memory_ids);
     }
+    new ProjectStateService(this.db).update(activeProject.id, activeSession.id);
 
     return { ok: true, warnings, ids, message: `Recorded ${payload.eventName}` };
   }
@@ -296,10 +358,20 @@ export class CcmService {
     source?: "user" | "codex" | "tool";
     supersedes?: string[];
   }): Memory {
-    const projectId = input.projectId ?? this.projects.latestSession()?.projectId;
-    const session = this.projects.latestSession(projectId);
     const content = input.rationale ? `${input.decision}\nRationale: ${input.rationale}` : input.decision;
+    const latest = this.projects.latestSession();
+    const attributed = input.projectId ? undefined : new ProjectAttributionService(this.db).inferProject(content, latest?.projectId);
+    const projectId = input.projectId ?? attributed?.project.id ?? latest?.projectId;
+    const session = this.projects.latestSession(projectId);
     const salience = scoreSalience({ text: content, signals: ["decision"] });
+    const sourceRef = {
+      kind: input.source ?? "codex",
+      label: "record_decision",
+      timestamp: new Date().toISOString(),
+      metadata: attributed
+        ? { attributedProjectId: attributed.project.id, attributedProjectName: attributed.project.name, confidence: attributed.confidence, reasons: attributed.reasons }
+        : undefined
+    } as const;
     const memory = this.memories.create({
       projectId,
       sessionId: session?.id,
@@ -313,7 +385,7 @@ export class CcmService {
       salience,
       confidence: input.source === "user" ? 0.95 : 0.82,
       decayPolicy: "project_long_term",
-      sourceRefs: [{ kind: input.source ?? "codex", label: "record_decision", timestamp: new Date().toISOString() }]
+      sourceRefs: [sourceRef]
     });
     new EmbeddingService(this.db, loadConfig(process.cwd())).queueMemory(memory.id);
     if (session) {
@@ -328,7 +400,15 @@ export class CcmService {
         salience,
         confidence: memory.confidence
       });
+      recordOutcomeEvents({
+        events: this.events,
+        projectId,
+        sessionId: session.id,
+        text: content,
+        sourceRefs: [{ kind: "system", label: memory.id, timestamp: new Date().toISOString() }]
+      });
     }
+    new ProjectStateService(this.db).update(projectId, session?.id);
     return memory;
   }
 
@@ -397,6 +477,7 @@ export class CcmService {
     });
     new EmbeddingService(this.db, loadConfig(input.repoPath ?? process.cwd())).queueMemory(memory.id);
     if (session) this.projects.updateSessionSummary(session.id, handoff);
+    new ProjectStateService(this.db).update(projectId, session?.id);
     this.writeSessionBrief(input.repoPath ?? process.cwd(), projectId, session?.id);
     return {
       working_context_brief: handoff,
@@ -409,9 +490,11 @@ export class CcmService {
   }
 
   writeSessionBrief(repoPath: string, projectId?: string, sessionId?: string): void {
+    const existingProject = projectId ? this.projects.get(projectId) : undefined;
     const response = this.getWorkingContext({
       task: "Start or resume this Codex session.",
       repoPath,
+      projectName: existingProject?.name,
       maxTokens: 1500,
       includeArtifacts: true,
       includeOpenLoops: true,
@@ -489,17 +572,34 @@ export class CcmService {
 
   recordOpenLoop(input: { title: string; description: string; projectId?: string; priority?: number }) {
     const latest = this.projects.latestSession(input.projectId);
-    return this.openLoops.create({
-      projectId: input.projectId ?? latest?.projectId,
-      sessionId: latest?.id,
+    const attributed = input.projectId ? undefined : new ProjectAttributionService(this.db).inferProject(`${input.title}\n${input.description}`, latest?.projectId);
+    const projectId = input.projectId ?? attributed?.project.id ?? latest?.projectId;
+    const session = this.projects.latestSession(projectId) ?? latest;
+    const loop = this.openLoops.create({
+      projectId,
+      sessionId: session?.id,
       title: input.title,
       description: input.description,
-      priority: input.priority
+      priority: input.priority,
+      sourceRefs: attributed
+        ? [
+            {
+              kind: "system",
+              label: "project_attribution",
+              timestamp: new Date().toISOString(),
+              metadata: { attributedProjectId: attributed.project.id, attributedProjectName: attributed.project.name, confidence: attributed.confidence, reasons: attributed.reasons }
+            }
+          ]
+        : undefined
     });
+    new ProjectStateService(this.db).update(projectId, session?.id);
+    return loop;
   }
 
   resolveOpenLoop(input: { id: string; resolution?: string }) {
-    return this.openLoops.close(input.id, input.resolution);
+    const closed = this.openLoops.close(input.id, input.resolution);
+    if (closed?.projectId) new ProjectStateService(this.db).update(closed.projectId, closed.sessionId);
+    return closed;
   }
 
   quarantineMemory(memoryId: string, reason: string) {

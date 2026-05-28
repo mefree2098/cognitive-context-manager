@@ -10,6 +10,7 @@ import { registerDbCommand } from "./commands/db.js";
 import { registerEmbeddingsCommand } from "./commands/embeddings.js";
 import { registerExportCommand } from "./commands/export.js";
 import { registerHygieneCommand } from "./commands/hygiene.js";
+import { registerHooksCommand } from "./commands/hooks.js";
 import { registerImportCommand } from "./commands/import.js";
 import { registerInitCommand } from "./commands/init.js";
 import { registerKeysCommand } from "./commands/keys.js";
@@ -24,7 +25,7 @@ import { isMainModule } from "../runtime/is-main.js";
 
 export function buildCli(): Command {
   const program = new Command();
-  program.name("ccm").description("Cognitive Context Manager for Codex").version("0.3.2");
+  program.name("ccm").description("Cognitive Context Manager for Codex").version("0.3.3");
 
   registerInitCommand(program);
   registerDoctorCommand(program);
@@ -43,6 +44,7 @@ export function buildCli(): Command {
   registerUiCommand(program);
   registerAgentsCommand(program);
   registerHygieneCommand(program);
+  registerHooksCommand(program);
   registerBenchCommand(program);
   registerExportCommand(program);
   registerImportCommand(program);

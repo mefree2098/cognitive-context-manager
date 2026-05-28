@@ -4,7 +4,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import type { CcmConfig } from "../types/config.js";
 import { defaultConfig } from "./defaults.js";
 
-function expandHome(value: string): string {
+export function expandHome(value: string): string {
   if (value === "~") return homedir();
   if (value.startsWith("~/")) return join(homedir(), value.slice(2));
   return value;
@@ -104,4 +104,9 @@ export function loadConfig(repoPath = process.cwd()): CcmConfig {
 
 export function getDatabasePath(config: CcmConfig): string {
   return join(config.storage.home, config.storage.database);
+}
+
+export function getUserConfigPath(): string {
+  const envHome = process.env.CCM_HOME;
+  return join(expandHome(envHome ?? defaultConfig.storage.home), "config.json");
 }

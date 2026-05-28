@@ -28,14 +28,41 @@ ccm report effectiveness --since all --project-name manga --format markdown
 Read the report conservatively:
 
 - `passiveHookStatus=recent` means passive hooks fired within the current freshness window.
+- `passiveHookProof=host_launch_and_trace_proven` is the current bar for claiming CCM works as a silent always-on safety net.
 - `passiveHookStatus=stale` means hooks have fired before, but CCM is not currently proven as a silent always-on safety net.
 - `captureMode=explicit_mcp_only` is still useful, but it means value is coming from explicit skill/MCP use.
 - `memoryPressure=high` or `critical` means active memories may need hygiene/consolidation before making publishing claims.
 - Token savings are estimates; use them alongside checkpoint/resume and recovery evidence.
 
-## Optional Embeddings
+## Attribution And Context Hygiene
 
-Embeddings are disabled by default. To use deterministic local embeddings, set:
+CCM can repair cross-project open loops when a task was captured under the wrong current working directory:
+
+```bash
+ccm hygiene attribution
+ccm hygiene attribution --apply
+```
+
+Duplicate and handoff hygiene archives repeated compact-session summaries while keeping the newest handoffs active:
+
+```bash
+ccm hygiene duplicates --keep-recent-handoffs 5
+ccm hygiene duplicates --apply --keep-recent-handoffs 5
+```
+
+CCM also maintains one active rolling project-state memory per project with the current goal, last verified state, active blockers, next action, and recent decisions. Outcome events such as `tests_passed`, `build_passed`, `deployed`, `qa_verified`, `blocked`, and `abandoned` appear in effectiveness reports.
+
+## Embeddings
+
+Embeddings are enabled by default. CCM first uses the existing Codex auth file at `~/.codex/auth.json` for OpenAI embeddings, redacts text before embedding requests, and falls back to deterministic local embeddings if Codex auth is unavailable.
+
+Check the active provider:
+
+```bash
+ccm embeddings status
+```
+
+To force deterministic local embeddings, set:
 
 ```json
 {
@@ -49,6 +76,12 @@ Then run:
 ```bash
 ccm embeddings backfill
 ccm embeddings process
+```
+
+To opt out and return to FTS-only retrieval:
+
+```bash
+ccm embeddings disable
 ```
 
 ## Optional Daemon

@@ -35,7 +35,7 @@ describe("MCP tool wrappers", () => {
         supersedes: []
       });
       expect(decision.memory.id).toMatch(/^memory_/);
-      expect(searchMemories(service, { query: "SQLite", projectId: project.id, includeStale: false, limit: 10 }).results.length).toBe(1);
+      expect(searchMemories(service, { query: "SQLite", projectId: project.id, includeStale: false, limit: 10 }).results.length).toBeGreaterThanOrEqual(1);
       expect(getOpenLoops(service, { projectId: project.id, includeClosed: false, limit: 10 }).open_loops).toEqual([]);
       expect(getWorkingContext(service, { task: "SQLite storage", repoPath: process.cwd(), maxTokens: 1200, includeArtifacts: true, includeOpenLoops: true, includeProcedural: true }).working_context_brief).toContain("SQLite");
       expect(compactSession(service, { projectId: project.id, maxTokens: 1200 }).working_context_brief).toContain("Session Handoff");

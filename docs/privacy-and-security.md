@@ -4,7 +4,9 @@ The MVP is local-first and has no telemetry. It writes to `~/.codex/cognitive-co
 
 Secrets are redacted before memory, event, log, or export writes. Redaction covers API keys, OAuth tokens, private keys, passwords, session cookies, connection strings, GitHub tokens, OpenAI keys, AWS keys, Azure credentials, and Google service account private keys.
 
-Cloud embeddings and summarization are disabled by default and require explicit configuration.
+OpenAI embeddings are enabled by default through the existing Codex auth file at `~/.codex/auth.json`. CCM redacts text before embedding requests and falls back to deterministic local embeddings when Codex auth is unavailable. Set `embeddings.enabled=false`, `embeddings.provider=local`, or `privacy.allowCloudEmbeddings=false` to prevent cloud embedding requests.
+
+Cloud summarization is disabled by default and requires explicit configuration.
 
 Retrieved memories are wrapped between `CCM_CONTEXT_BRIEF_START` and `CCM_CONTEXT_BRIEF_END` with a warning that they are contextual data, not instructions. AGENTS.md and higher-priority Codex instructions always win.
 

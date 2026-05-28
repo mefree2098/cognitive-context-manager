@@ -5,12 +5,16 @@ import type { CcmConfig } from "../types/config.js";
 import type { Memory } from "../types/memory.js";
 import { MemoriesRepo } from "../storage/repositories/memories-repo.js";
 import { nowIso, Row } from "../storage/repositories/row-utils.js";
+import { resolveOpenAiCredential, type OpenAiCredentialSource } from "./openai-auth.js";
 import { redactSecrets } from "./secret-redactor.js";
 
 export interface EmbeddingProvider {
   id: string;
   displayName: string;
   dimensions: number;
+  authSource?: OpenAiCredentialSource;
+  fallbackReason?: string;
+  availabilityStatus?: "available" | "disabled" | "missing_auth" | "missing_url";
   isAvailable(): Promise<boolean>;
   embedText(input: string): Promise<number[]>;
   embedBatch(inputs: string[]): Promise<number[][]>;
@@ -20,6 +24,7 @@ export class NoneEmbeddingProvider implements EmbeddingProvider {
   id = "none";
   displayName = "Disabled";
   dimensions = 0;
+  availabilityStatus: EmbeddingProvider["availabilityStatus"] = "disabled";
   async isAvailable(): Promise<boolean> {
     return true;
   }
@@ -35,6 +40,9 @@ export class LocalHashEmbeddingProvider implements EmbeddingProvider {
   id = "local";
   displayName = "Local deterministic hashing";
   dimensions: number;
+  authSource?: OpenAiCredentialSource;
+  fallbackReason?: string;
+  availabilityStatus: EmbeddingProvider["availabilityStatus"] = "available";
 
   constructor(dimensions = 128) {
     this.dimensions = dimensions;
@@ -72,7 +80,9 @@ export class HttpEmbeddingProvider implements EmbeddingProvider {
     private readonly url: string,
     private readonly model: string,
     private readonly apiKey?: string,
-    dimensions = 1536
+    dimensions = 1536,
+    readonly authSource?: OpenAiCredentialSource,
+    readonly fallbackReason?: string
   ) {
     this.id = id;
     this.displayName = displayName;
@@ -80,7 +90,13 @@ export class HttpEmbeddingProvider implements EmbeddingProvider {
   }
 
   async isAvailable(): Promise<boolean> {
-    return Boolean(this.url) && (!this.id.includes("openai") || Boolean(this.apiKey));
+    return this.availabilityStatus === "available";
+  }
+
+  get availabilityStatus(): EmbeddingProvider["availabilityStatus"] {
+    if (!this.url) return "missing_url";
+    if (this.id.includes("openai") && !this.apiKey) return "missing_auth";
+    return "available";
   }
 
   async embedText(input: string): Promise<number[]> {
@@ -116,13 +132,20 @@ export function getEmbeddingProvider(config: CcmConfig): EmbeddingProvider {
     );
   }
   if (config.embeddings.provider === "openai") {
+    if (!config.privacy.allowCloudEmbeddings) {
+      return embeddingFallback(config, "Cloud embeddings are disabled by privacy.allowCloudEmbeddings=false.");
+    }
+    const credential = resolveOpenAiCredential(config.embeddings.openai);
+    if (!credential.token) return embeddingFallback(config, credential.unavailableReason ?? "No OpenAI credential was available.");
     return new HttpEmbeddingProvider(
       "openai",
       "OpenAI",
       "https://api.openai.com/v1",
       config.embeddings.openai.model,
-      process.env[config.embeddings.openai.apiKeyEnv],
-      config.embeddings.dimensions || 1536
+      credential.token,
+      config.embeddings.dimensions || 1536,
+      credential.source,
+      undefined
     );
   }
   return new HttpEmbeddingProvider(
@@ -132,6 +155,24 @@ export function getEmbeddingProvider(config: CcmConfig): EmbeddingProvider {
     config.embeddings.custom.model || config.embeddings.model,
     config.embeddings.custom.apiKeyEnv ? process.env[config.embeddings.custom.apiKeyEnv] : undefined,
     config.embeddings.custom.dimensions || config.embeddings.dimensions || 768
+  );
+}
+
+function embeddingFallback(config: CcmConfig, reason: string): EmbeddingProvider {
+  if (config.embeddings.fallbackProvider === "local") {
+    const provider = new LocalHashEmbeddingProvider(384);
+    provider.fallbackReason = reason;
+    return provider;
+  }
+  return new HttpEmbeddingProvider(
+    "openai",
+    "OpenAI",
+    "https://api.openai.com/v1",
+    config.embeddings.openai.model,
+    undefined,
+    config.embeddings.dimensions || 1536,
+    "none",
+    reason
   );
 }
 
@@ -182,8 +223,14 @@ export class EmbeddingService {
     const provider = getEmbeddingProvider(this.config);
     return {
       enabled: this.config.embeddings.enabled,
+      configuredProvider: this.config.embeddings.provider,
       provider: provider.id,
+      displayName: provider.displayName,
       dimensions: provider.dimensions,
+      model: this.providerModel(provider),
+      authSource: provider.authSource ?? "none",
+      available: provider.availabilityStatus === "available",
+      fallbackReason: provider.fallbackReason,
       queued,
       failed,
       embedded
@@ -254,7 +301,6 @@ export class EmbeddingService {
   async vectorSearch(query: string, projectId?: string, limit = 10): Promise<Array<Memory & { vectorScore: number }>> {
     const provider = getEmbeddingProvider(this.config);
     if (!this.config.embeddings.enabled || !(await provider.isAvailable())) return [];
-    const queryVector = await provider.embedText(redactSecrets(query).text);
     const rows = this.db
       .prepare(
         `SELECT e.vector, m.* FROM embeddings e
@@ -263,6 +309,8 @@ export class EmbeddingService {
          LIMIT 2000`
       )
       .all(...(projectId ? [provider.id, this.providerModel(provider), projectId] : [provider.id, this.providerModel(provider)])) as Row[];
+    if (!rows.length) return [];
+    const queryVector = await provider.embedText(redactSecrets(query).text);
     const repo = new MemoriesRepo(this.db);
     return rows
       .map((row) => {

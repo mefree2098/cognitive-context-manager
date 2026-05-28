@@ -27,14 +27,22 @@ ccm report effectiveness --since 48h --format markdown
 
 Look for `passiveHookStatus=recent`, nonzero passive hook coverage, and no hook failures. If the report says `passiveHookStatus=stale` or `not_seen`, verify `~/.codex/config.toml` has `[features].hooks = true`, confirm the plugin cache manifests are present, restart Codex Desktop, then run a normal workspace task.
 
+For a clean passive-hook proof run, use `docs/passive-hook-test.md` and the watcher:
+
+```bash
+ccm hooks watch --seconds 600
+```
+
 If memory pressure is high or critical, run:
 
 ```bash
 ccm hygiene report
+ccm hygiene attribution
+ccm hygiene duplicates
 ccm memory list --limit 50
 ```
 
-Archive or quarantine low-value repeated handoffs before using the report as publishing evidence.
+Archive or quarantine low-value repeated handoffs before using the report as publishing evidence. Use attribution repair when an open loop clearly belongs to another known project.
 
 For post-MVP features:
 

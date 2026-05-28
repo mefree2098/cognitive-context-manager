@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -8,9 +8,11 @@ import { BenchService } from "../../src/core/bench-service.js";
 import { backupDatabase, schemaStatus, verifyDatabase } from "../../src/core/db-admin.js";
 import { EmbeddingService } from "../../src/core/embedding-provider.js";
 import { EffectivenessReportService } from "../../src/core/effectiveness-report.js";
+import { recordHookAttempt } from "../../src/core/hook-attempt-log.js";
 import { HygieneService } from "../../src/core/hygiene.js";
 import { SyncService } from "../../src/core/sync-service.js";
 import { CcmService } from "../../src/core/consolidator.js";
+import { runDoctorWithOptions } from "../../src/cli/commands/doctor.js";
 import { openDb } from "../../src/storage/db.js";
 
 let home: string;
@@ -74,15 +76,72 @@ describe("post-MVP features", () => {
         salience: 0.9,
         confidence: 0.85
       });
+      service.events.create({
+        projectId: project.id,
+        sessionId: session.id,
+        eventType: "test_result",
+        title: "Verification passed",
+        summary: "QA passed and production verified after resuming from the filesystem checkpoint.",
+        entities: [],
+        sourceRefs: [],
+        salience: 0.86,
+        confidence: 0.85
+      });
+      service.events.create({
+        projectId: project.id,
+        sessionId: session.id,
+        eventType: "implementation_step",
+        title: "Task completed",
+        summary: "Completed the resumed manga recovery and verified the final artifact order.",
+        entities: [],
+        sourceRefs: [],
+        salience: 0.82,
+        confidence: 0.85
+      });
       service.getWorkingContext({ task: "resume manga from page_013.png", repoPath: repo, projectName: "manga" });
+      service.compactSession({ repoPath: repo, projectId: project.id, sessionId: session.id });
 
       const report = new EffectivenessReportService(context.db, loadConfig(repo)).report({ since: "all", projectName: "manga" });
       expect(report.resilience.failureSignals).toBeGreaterThan(0);
       expect(report.resilience.resumeSignals).toBeGreaterThan(0);
       expect(report.resilience.checkpointSignals).toBeGreaterThan(0);
       expect(report.resilience.lastCheckpoint).toBe("page_013.png");
+      expect(report.executionImpact.verificationSignals).toBeGreaterThan(0);
+      expect(report.executionImpact.completionSignals).toBeGreaterThan(0);
+      expect(report.executionImpact.compactionSignals).toBeGreaterThan(0);
+      expect(report.executionImpact.executionContinuityScore).toBeGreaterThanOrEqual(80);
       expect(report.summary.contextBriefsGenerated).toBeGreaterThan(0);
-      expect(new EffectivenessReportService(context.db, loadConfig(repo)).renderMarkdown(report)).toContain("Long-Running Task Resilience");
+      const markdown = new EffectivenessReportService(context.db, loadConfig(repo)).renderMarkdown(report);
+      expect(markdown).toContain("Long-Running Task Resilience");
+      expect(markdown).toContain("Execution Impact");
+    } finally {
+      context.db.close();
+    }
+  });
+
+  it("caps execution-impact score when completion evidence is missing", () => {
+    const context = openDb(repo);
+    try {
+      const service = new CcmService({ db: context.db, repoPath: repo });
+      const { project, session } = service.ensureProjectSession(repo, "qa-only");
+      service.events.create({
+        projectId: project.id,
+        sessionId: session.id,
+        eventType: "test_result",
+        title: "Verification passed",
+        summary: "Tests passed and checkpoint verification succeeded after resuming the task.",
+        entities: [],
+        sourceRefs: [],
+        salience: 0.85,
+        confidence: 0.85
+      });
+      service.getWorkingContext({ task: "continue QA-only task", repoPath: repo, projectName: "qa-only" });
+
+      const report = new EffectivenessReportService(context.db, loadConfig(repo)).report({ since: "all", projectName: "qa-only" });
+      expect(report.executionImpact.verificationSignals).toBeGreaterThan(0);
+      expect(report.executionImpact.completionSignals).toBe(0);
+      expect(report.executionImpact.executionContinuityScore).toBeLessThanOrEqual(78);
+      expect(report.executionImpact.verdict).toContain("Promising");
     } finally {
       context.db.close();
     }
@@ -176,6 +235,8 @@ describe("post-MVP features", () => {
       expect(report.reliability.passiveHookEvents).toBe(1);
       expect(report.reliability.passiveHookStatus).toBe("stale");
       expect(report.reliability.latestPassiveHookAt).toBe(staleHookAt);
+      expect(report.reliability.passiveHookWatchdog).toBe("mcp_active_but_hooks_absent");
+      expect(report.reliability.passiveHookProof).toBe("not_proven");
       expect(report.reliability.explicitMcpRecords).toBeGreaterThan(0);
       expect(report.publishReadiness.gaps.some((gap) => gap.includes("Passive hook capture is stale"))).toBe(true);
       expect(report.publishReadiness.strengths).not.toContain("Passive hook capture is verified.");
@@ -188,22 +249,143 @@ describe("post-MVP features", () => {
     }
   });
 
-  it("supports opt-in local embeddings and FTS fallback when disabled", async () => {
+  it("runs a hook self-test without counting it as passive hook evidence", async () => {
+    const checks = await runDoctorWithOptions(repo, { hookSelfTest: true });
+    expect(checks.find((check) => check.name === "Hook entrypoint self-test")?.ok).toBe(true);
+
+    const context = openDb(repo);
+    try {
+      const selfTestHooks = context.db
+        .prepare("SELECT COUNT(*) AS count FROM trace_entries WHERE trace_type = 'hook' AND COALESCE(json_extract(payload_json, '$.selfTest'), 0) = 1")
+        .get() as { count: number };
+      expect(Number(selfTestHooks.count)).toBe(1);
+      const service = new CcmService({ db: context.db, repoPath: repo });
+      const { project } = service.ensureProjectSession(repo, "cognitive-context-manager");
+      const now = new Date().toISOString();
+      context.db
+        .prepare(
+          `INSERT INTO sessions(id, project_id, codex_session_id, started_at, last_seen_at, status, metadata_json)
+           VALUES ('session_legacy_doctor_self_test', ?, 'ccm-doctor-self-test-legacy', ?, ?, 'active', '{}')`
+        )
+        .run(project.id, now, now);
+      context.db
+        .prepare(
+          `INSERT INTO trace_entries(id, project_id, session_id, trace_type, title, payload_json, created_at)
+           VALUES ('trace_legacy_doctor_self_test', ?, 'session_legacy_doctor_self_test', 'hook', 'UserPromptSubmit', '{"eventType":"user_prompt"}', ?)`
+        )
+        .run(project.id, now);
+      const report = new EffectivenessReportService(context.db, loadConfig(repo)).report({ since: "all" });
+      expect(report.summary.hookEvents).toBe(0);
+      expect(report.reliability.passiveHookEvents).toBe(0);
+      expect(report.reliability.passiveHookStatus).toBe("not_seen");
+      expect(report.reliability.hookAttemptLogEntries).toBeGreaterThan(0);
+      expect(report.reliability.realHookAttemptLogEntries).toBe(0);
+      expect(report.reliability.hookAttemptLogStatus).toBe("self_test_only");
+      expect(report.reliability.passiveHookWatchdog).toBe("no_recent_activity");
+      expect(report.reliability.passiveHookProof).toBe("self_test_only");
+    } finally {
+      context.db.close();
+    }
+  });
+
+  it("uses the fallback hook-attempt log to flag hook launches that never became traces", () => {
+    recordHookAttempt({
+      stage: "received",
+      eventName: "UserPromptSubmit",
+      rawPayload: { cwd: repo, sessionId: "real-hook-attempt", prompt: "real prompt" }
+    });
+    const context = openDb(repo);
+    try {
+      const report = new EffectivenessReportService(context.db, loadConfig(repo)).report({ since: "all" });
+      expect(report.reliability.hookAttemptLogStatus).toBe("real_attempts_seen");
+      expect(report.reliability.realHookAttemptLogEntries).toBe(1);
+      expect(report.reliability.passiveHookWatchdog).toBe("hook_attempts_without_traces");
+      expect(report.reliability.passiveHookProof).toBe("host_launch_seen");
+    } finally {
+      context.db.close();
+    }
+  });
+
+  it("attributes cross-project loops, maintains rolling state, and records explicit outcomes", () => {
+    const audiobookRepo = mkdtempSync(join(tmpdir(), "ccm-audiobook-"));
+    const context = openDb(repo);
+    try {
+      const service = new CcmService({ db: context.db, repoPath: repo });
+      const audiobook = service.ensureProjectSession(audiobookRepo, "audiobook");
+      service.ensureProjectSession(repo, "cognitive-context-manager");
+
+      const loop = service.recordOpenLoop({
+        title: "Complete Audiobook public install",
+        description: "Audiobook installer still needs to run and audiobook.ntechr.com does not resolve yet.",
+        priority: 2
+      });
+      expect(loop.projectId).toBe(audiobook.project.id);
+
+      service.recordDecision({
+        projectId: audiobook.project.id,
+        decision: "Audiobook tests passed, deployed to production, and QA verified on the public install.",
+        source: "codex"
+      });
+
+      const state = context.db
+        .prepare("SELECT content FROM memories WHERE project_id = ? AND stale_status = 'active' AND tags_json LIKE '%project_state%'")
+        .get(audiobook.project.id) as { content?: string } | undefined;
+      expect(state?.content).toContain("Project: audiobook");
+      expect(state?.content).toContain("Last verified state");
+
+      const report = new EffectivenessReportService(context.db, loadConfig(repo)).report({ since: "all", projectName: "audiobook" });
+      expect(report.executionImpact.outcomeSignals.tests_passed).toBeGreaterThan(0);
+      expect(report.executionImpact.outcomeSignals.deployed).toBeGreaterThan(0);
+      expect(report.executionImpact.outcomeSignals.qa_verified).toBeGreaterThan(0);
+    } finally {
+      context.db.close();
+      rmSync(audiobookRepo, { recursive: true, force: true });
+    }
+  });
+
+  it("archives duplicate and older compact-session handoffs", () => {
+    const context = openDb(repo);
+    try {
+      const service = new CcmService({ db: context.db, repoPath: repo });
+      const { project, session } = service.ensureProjectSession(repo, "cognitive-context-manager");
+      for (let index = 0; index < 6; index += 1) {
+        service.compactSession({ repoPath: repo, projectId: project.id, sessionId: session.id });
+      }
+      const hygiene = new HygieneService(context.db, loadConfig(repo));
+      const plan = hygiene.duplicatePlan({ projectId: project.id, keepRecentHandoffs: 2 });
+      expect(plan.filter((action) => action.action === "archive_old_handoff").length).toBeGreaterThanOrEqual(4);
+      hygiene.runDuplicateHygiene(false, { projectId: project.id, keepRecentHandoffs: 2 });
+      const activeHandoffs = context.db
+        .prepare("SELECT COUNT(*) AS count FROM memories WHERE project_id = ? AND stale_status = 'active' AND tags_json LIKE '%compact_session%'")
+        .get(project.id) as { count: number };
+      expect(Number(activeHandoffs.count)).toBeLessThanOrEqual(2);
+    } finally {
+      context.db.close();
+    }
+  });
+
+  it("supports default embeddings, local override, and FTS-only opt-out", async () => {
     let context = openDb(repo);
     try {
       const service = new CcmService({ db: context.db, repoPath: repo });
       const project = service.ensureProjectSession(repo).project;
       const memory = service.memories.create({ projectId: project.id, memoryType: "semantic", content: "Semantic recall should find spacecraft shield tuning." });
+      const defaultStatus = new EmbeddingService(context.db, loadConfig(repo)).status();
+      expect(defaultStatus.enabled).toBe(true);
+      expect(defaultStatus.configuredProvider).toBe("openai");
+      expect(["openai", "local"]).toContain(defaultStatus.provider);
+
+      const configPath = join(home, "config.json");
+      writeFileSync(configPath, JSON.stringify({ embeddings: { enabled: false, provider: "none" }, retrieval: { mode: "fts" } }, null, 2));
       expect(new EmbeddingService(context.db, loadConfig(repo)).status().enabled).toBe(false);
       context.db.close();
 
       process.env.CCM_HOME = home;
-      const configPath = join(home, "config.json");
       const config = loadConfig(repo);
       config.embeddings.enabled = true;
       config.embeddings.provider = "local";
+      config.embeddings.fallbackProvider = "none";
       config.retrieval.mode = "hybrid";
-      const { writeFileSync } = await import("node:fs");
       writeFileSync(configPath, JSON.stringify(config, null, 2));
 
       context = openDb(repo);
@@ -211,6 +393,32 @@ describe("post-MVP features", () => {
       embeddings.queueMemory(memory.id);
       expect((await embeddings.process(10)).processed).toBe(1);
       expect((await embeddings.vectorSearch("shield tuning", project.id, 5))[0]?.id).toBe(memory.id);
+    } finally {
+      context.db.close();
+    }
+  });
+
+  it("resolves Codex ChatGPT auth as the default OpenAI embedding source", () => {
+    const authPath = join(home, "auth.json");
+    writeFileSync(
+      authPath,
+      JSON.stringify({
+        auth_mode: "chatgpt",
+        tokens: {
+          access_token: fakeJwt(Math.floor(Date.now() / 1000) + 3600)
+        }
+      })
+    );
+    writeFileSync(join(home, "config.json"), JSON.stringify({ embeddings: { openai: { codexAuthPath: authPath } } }, null, 2));
+
+    const context = openDb(repo);
+    try {
+      const status = new EmbeddingService(context.db, loadConfig(repo)).status();
+      expect(status.enabled).toBe(true);
+      expect(status.provider).toBe("openai");
+      expect(status.authSource).toBe("codex-chatgpt");
+      expect(status.available).toBe(true);
+      expect(status.dimensions).toBe(1536);
     } finally {
       context.db.close();
     }
@@ -247,6 +455,22 @@ describe("post-MVP features", () => {
         candidateInstruction: "Always verify current files before trusting CCM memory.",
         evidenceMemoryIds: [memory.id]
       });
+      for (let index = 0; index < 3; index += 1) {
+        service.memories.create({
+          projectId: project.id,
+          memoryType: "episodic",
+          content: `Tiny low value trace ${index}`,
+          salience: 0.1,
+          updatedAt: new Date(Date.now() - 31 * 86_400_000).toISOString()
+        });
+      }
+      const hygieneReport = new HygieneService(context.db, loadConfig(repo)).report();
+      expect(hygieneReport.lowSalienceByProject[0]?.count).toBeGreaterThanOrEqual(3);
+      const hygiene = new HygieneService(context.db, loadConfig(repo));
+      expect(hygiene.plan({ olderThanDays: 30, projectId: project.id }).length).toBeGreaterThanOrEqual(3);
+      const memoryCountBeforeHygiene = service.memories.list(100, project.id).length;
+      expect(hygiene.run(false, { olderThanDays: 30, projectId: project.id }).actions.length).toBeGreaterThanOrEqual(3);
+      expect(service.memories.list(100, project.id).length).toBe(memoryCountBeforeHygiene);
       expect(suggestion.diff).toContain("AGENTS.md");
       new AgentsSuggestionService(context.db).apply(suggestion.id, repo);
       expect(readFileSync(join(repo, "AGENTS.md"), "utf8")).toContain("Always verify current files");
@@ -258,3 +482,9 @@ describe("post-MVP features", () => {
     }
   });
 });
+
+function fakeJwt(exp: number): string {
+  const header = Buffer.from(JSON.stringify({ alg: "none", typ: "JWT" })).toString("base64url");
+  const payload = Buffer.from(JSON.stringify({ exp })).toString("base64url");
+  return `${header}.${payload}.signature`;
+}

@@ -4,9 +4,10 @@ import { dirname, resolve } from "node:path";
 import { openDb } from "../storage/db.js";
 import { CcmService } from "../core/consolidator.js";
 import { normalizeHookPayload } from "../core/event-segmenter.js";
+import { recordHookAttempt } from "../core/hook-attempt-log.js";
 import { log } from "../core/logger.js";
 import { isMainModule } from "../runtime/is-main.js";
-import type { HookEventName } from "../types/hooks.js";
+import type { HookEventName, HookResult } from "../types/hooks.js";
 import { handleSessionStart } from "./session-start.js";
 import { handleUserPromptSubmit } from "./user-prompt-submit.js";
 import { handlePreToolUse } from "./pre-tool-use.js";
@@ -35,26 +36,36 @@ function parsePayload(raw: string): Record<string, unknown> {
 }
 
 export async function runHook(eventName: string, rawPayload?: Record<string, unknown>) {
+  recordHookAttempt({ stage: "received", eventName, rawPayload: rawPayload ?? {}, pluginRoot });
   const payload = normalizeHookPayload(eventName, rawPayload ?? {});
   const context = openDb(payload.cwd);
   try {
     const service = new CcmService({ db: context.db, repoPath: payload.cwd });
+    let result: HookResult;
     switch (payload.eventName) {
       case "SessionStart":
-        return handleSessionStart(service, payload);
+        result = handleSessionStart(service, payload);
+        break;
       case "UserPromptSubmit":
-        return handleUserPromptSubmit(service, payload);
+        result = handleUserPromptSubmit(service, payload);
+        break;
       case "PreToolUse":
-        return handlePreToolUse(service, payload);
+        result = handlePreToolUse(service, payload);
+        break;
       case "PostToolUse":
-        return handlePostToolUse(service, payload);
+        result = handlePostToolUse(service, payload);
+        break;
       case "PermissionRequest":
-        return handlePermissionRequest(service, payload);
+        result = handlePermissionRequest(service, payload);
+        break;
       case "Stop":
-        return handleStop(service, payload);
+        result = handleStop(service, payload);
+        break;
       default:
-        return service.handleHook(payload);
+        result = service.handleHook(payload);
     }
+    recordHookAttempt({ stage: "recorded", eventName, rawPayload: rawPayload ?? {}, pluginRoot });
+    return result;
   } finally {
     context.db.close();
   }
@@ -70,6 +81,7 @@ async function main(): Promise<void> {
       process.stdout.write(`${JSON.stringify({ ok: true, warnings: result.warnings })}\n`);
     }
   } catch (error) {
+    recordHookAttempt({ stage: "failed", eventName, rawPayload: payload, pluginRoot, error });
     log("error", "Hook failed gracefully", { eventName, error: error instanceof Error ? error.message : String(error) });
   }
 }

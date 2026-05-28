@@ -15,7 +15,7 @@ The context builder returns a brief, not a transcript. It prefers semantic memor
 Version 0.2 adds optional services around the same SQLite store:
 
 - `trace_entries` explain hook and retrieval decisions.
-- `embeddings` and `embedding_jobs` enable opt-in hybrid retrieval while FTS remains default.
+- `embeddings` and `embedding_jobs` enable default hybrid retrieval with Codex-auth OpenAI embeddings and local fallback.
 - `consolidation_jobs` gives the daemon an idempotent queue surface.
 - `metrics` powers context-dividend reporting.
 - `agents_suggestions` stores explicit AGENTS.md diffs for user approval.
@@ -23,7 +23,7 @@ Version 0.2 adds optional services around the same SQLite store:
 - `entities`, `entity_edges`, and `memory_entities` provide the graph-ready storage layer.
 - `adaptive_agent_versions` and `adaptive_agent_patches` manage CCM-owned adaptive instructions with rollback.
 
-All advanced features are off or inert by default. If embeddings, daemon, GUI, or sync fail, the original hook/MCP/FTS path remains available.
+Embeddings are enabled by default and prefer OpenAI through existing Codex auth, with local deterministic fallback when auth or cloud embedding policy prevents remote calls. If embeddings, daemon, GUI, or sync fail, the original hook/MCP/FTS path remains available.
 
 ## Adaptive Agent Guidance
 

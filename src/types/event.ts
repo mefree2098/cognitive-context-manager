@@ -12,6 +12,7 @@ export type EventType =
   | "artifact_change"
   | "test_result"
   | "implementation_step"
+  | "outcome"
   | "topic_shift"
   | "session_stop";
 

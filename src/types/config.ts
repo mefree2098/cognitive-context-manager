@@ -33,13 +33,16 @@ export interface CcmConfig {
   embeddings: {
     enabled: boolean;
     provider: "none" | "local" | "lmstudio" | "openai" | "custom";
+    fallbackProvider: "none" | "local";
     model: string;
     dimensions: number;
     batchSize: number;
     redactBeforeEmbedding: boolean;
     storeRawEmbeddingInput: boolean;
     openai: {
+      authMode: "codex" | "env" | "auto";
       apiKeyEnv: string;
+      codexAuthPath: string;
       model: string;
     };
     lmstudio: {

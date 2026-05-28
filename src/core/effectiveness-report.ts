@@ -2,6 +2,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type Database from "better-sqlite3";
 import type { CcmConfig } from "../types/config.js";
+import { passiveHookProof, passiveHookStatus, REAL_PASSIVE_HOOK_WHERE } from "./hook-diagnostics.js";
+import { hookAttemptStats } from "./hook-attempt-log.js";
 import { estimateTokens } from "./tokenizer.js";
 
 type Format = "json" | "markdown";
@@ -55,18 +57,38 @@ export interface EffectivenessReport {
     lastCheckpoint?: string;
     longRunningTaskSignals: number;
   };
+  executionImpact: {
+    compactionSignals: number;
+    compactionDependencyRate: number;
+    contextBriefsPerCompactionSignal: number;
+    compactionPressure: "none_observed" | "low" | "moderate" | "high";
+    verificationSignals: number;
+    completionSignals: number;
+    unresolvedOpenLoops: number;
+    recoveryToFailureRatio: number;
+    executionContinuityScore: number;
+    outcomeSignals: Record<string, number>;
+    verdict: string;
+  };
   reliability: {
     hookFailuresLogged: number;
     mcpFailuresLogged: number;
     explicitMcpRecords: number;
     passiveHookEvents: number;
     captureMode: "none" | "explicit_mcp_only" | "passive_hooks_only" | "explicit_mcp_and_passive_hooks";
+    passiveHookWatchdog: "ok" | "mcp_active_but_hooks_absent" | "hook_attempts_without_traces" | "no_recent_activity";
     latestExplicitMcpAt?: string;
     latestPassiveHookAt?: string;
     explicitMcpAgeHours?: number;
     passiveHookAgeHours?: number;
     passiveHookStatus: "recent" | "stale" | "not_seen";
+    passiveHookProof: "not_proven" | "self_test_only" | "host_launch_seen" | "host_launch_and_trace_proven";
     passiveHookCoverage: number;
+    hookAttemptLogEntries: number;
+    realHookAttemptLogEntries: number;
+    latestHookAttemptAt?: string;
+    latestRealHookAttemptAt?: string;
+    hookAttemptLogStatus: "not_seen" | "self_test_only" | "real_attempts_seen";
     suspectedSecrets: number;
   };
   memoryPressure: {
@@ -98,6 +120,8 @@ export interface EffectivenessReport {
     checkpointSamples: string[];
     recoverySamples: string[];
     failureSamples: string[];
+    verificationSamples: string[];
+    completionSamples: string[];
   };
   publishReadiness: {
     score: number;
@@ -132,9 +156,11 @@ const FAILURE_SIGNAL_REGEX = /\b(?:failure checkpoint|failed because|failed with
 const NEGATED_FAILURE_REGEX = /\b(?:no|without|zero)\s+(?:warning|warnings|error|errors|failure|failures)\b|warning-free|error-free|clean-builds?|succeeded with no|no warning\/error|no error matches/i;
 const LONG_RUNNING_REGEX = /\b(?:long[- ]running|full manga|volume|batch|pages? \d{1,4}|\d{1,4}[- ]page|production run|checkpoint-heavy)\b/i;
 const FILESYSTEM_VERIFY_REGEX = /\b(?:disk confirms|confirmed on disk|verified on disk|filesystem|finder verification|ls confirms|reading image_source_map|source_map)\b/i;
+const VERIFICATION_REGEX = /\b(?:verified|verification|qa pass(?:ed)?|smoke test(?:s)? pass(?:ed)?|tests? pass(?:ed)?|test suite pass(?:ed)?|build pass(?:ed)?|build succeeded|xcodebuild succeeded|deployed and verified|production verified|no warning\/error|clean xcodebuild)\b/i;
+const COMPLETION_REGEX = /\b(?:completed|complete|done|finished|shipped|deployed|merged|ready|closed out|qa'?d|validated|implemented and verified)\b/i;
 const SECRET_REGEX = /\b(?:redacted:[a-z0-9_-]+|REDACTED_[A-Z0-9_]+|(?:api[_ -]?key|token|secret|password|private[_ -]?key)\s*[:=]|sk-[A-Za-z0-9_-]{16,})\b/i;
 const EXPLICIT_MCP_SOURCE_REGEX = /\b(?:record_decision|compact_session|get_working_context|get_effectiveness_report)\b/;
-const RECENT_PASSIVE_HOOK_HOURS = 48;
+const REAL_PASSIVE_HOOK_PREDICATE = REAL_PASSIVE_HOOK_WHERE;
 
 export class EffectivenessReportService {
   constructor(
@@ -153,6 +179,7 @@ export class EffectivenessReportService {
     const resilience = this.resilience(textRows);
     const dividend = this.filteredDividend(filter);
     const memoryPressure = this.memoryPressure(filter, dividend.retrievedMemoriesUsed, summary.contextBriefsGenerated);
+    const executionImpact = this.executionImpact(filter, summary, resilience, textRows);
     const projects = this.projectAggregates(filter, textRows);
     const passiveHookEvents = summary.hookEvents;
     const explicitMcpRecords = this.explicitMcpRecords(filter);
@@ -160,18 +187,37 @@ export class EffectivenessReportService {
     const latestExplicitMcpAt = this.latestExplicitMcpAt(recencyFilter);
     const passiveHookAgeHours = ageHours(latestPassiveHookAt);
     const explicitMcpAgeHours = ageHours(latestExplicitMcpAt);
+    const attemptStats = hookAttemptStats(this.config.storage.home, windowStart);
+    const passiveStatus = passiveHookStatus(latestPassiveHookAt, passiveHookAgeHours);
     const reliability = {
       hookFailuresLogged: this.countLogMatches(/Hook .*failure|Hook failed/i),
       mcpFailuresLogged: this.countLogMatches(/MCP server failed/i),
       explicitMcpRecords,
       passiveHookEvents,
       captureMode: captureMode(explicitMcpRecords, passiveHookEvents),
+      passiveHookWatchdog: passiveHookWatchdog({
+        explicitMcpRecords,
+        passiveHookEvents,
+        passiveHookStatus: passiveStatus,
+        realHookAttemptLogEntries: attemptStats.realEntries
+      }),
       latestExplicitMcpAt,
       latestPassiveHookAt,
       explicitMcpAgeHours,
       passiveHookAgeHours,
-      passiveHookStatus: passiveHookStatus(latestPassiveHookAt, passiveHookAgeHours),
+      passiveHookStatus: passiveStatus,
+      passiveHookProof: passiveHookProof({
+        passiveHookStatus: passiveStatus,
+        passiveHookEvents,
+        realHookAttemptLogEntries: attemptStats.realEntries,
+        hookAttemptLogStatus: attemptStats.status
+      }),
       passiveHookCoverage: summary.contextBriefsGenerated ? round(passiveHookEvents / summary.contextBriefsGenerated, 3) : passiveHookEvents > 0 ? 1 : 0,
+      hookAttemptLogEntries: attemptStats.entries,
+      realHookAttemptLogEntries: attemptStats.realEntries,
+      latestHookAttemptAt: attemptStats.latestAt,
+      latestRealHookAttemptAt: attemptStats.latestRealAt,
+      hookAttemptLogStatus: attemptStats.status,
       suspectedSecrets: textRows.filter((row) => SECRET_REGEX.test(row.text)).length
     };
     const effectiveness = {
@@ -186,7 +232,9 @@ export class EffectivenessReportService {
     const evidence = {
       checkpointSamples: samples(textRows, (row) => hasRegex(row.text, CHECKPOINT_REGEX), sampleLimit),
       recoverySamples: samples(textRows, RECOVERY_REGEX, sampleLimit),
-      failureSamples: samples(textRows, isFailureSignal, sampleLimit)
+      failureSamples: samples(textRows, isFailureSignal, sampleLimit),
+      verificationSamples: samples(textRows, isVerificationSignal, sampleLimit),
+      completionSamples: samples(textRows, COMPLETION_REGEX, sampleLimit)
     };
     return {
       generatedAt: new Date().toISOString(),
@@ -196,11 +244,12 @@ export class EffectivenessReportService {
       summary,
       effectiveness,
       resilience,
+      executionImpact,
       reliability,
       memoryPressure,
       projects,
       evidence,
-      publishReadiness: publishReadiness(summary, effectiveness, resilience, reliability, memoryPressure)
+      publishReadiness: publishReadiness(summary, effectiveness, resilience, executionImpact, reliability, memoryPressure)
     };
   }
 
@@ -251,6 +300,20 @@ export class EffectivenessReportService {
       `- Filesystem verification signals: ${report.resilience.filesystemVerificationSignals}`,
       `- Last checkpoint: ${report.resilience.lastCheckpoint ?? "none detected"}`,
       "",
+      "## Execution Impact",
+      "",
+      `- Execution continuity score: ${report.executionImpact.executionContinuityScore}/100`,
+      `- Verdict: ${report.executionImpact.verdict}`,
+      `- Compaction signals: ${report.executionImpact.compactionSignals}`,
+      `- Compaction dependency rate: ${report.executionImpact.compactionDependencyRate}`,
+      `- Context briefs per compaction signal: ${report.executionImpact.contextBriefsPerCompactionSignal}`,
+      `- Compaction pressure: ${report.executionImpact.compactionPressure}`,
+      `- Verification signals: ${report.executionImpact.verificationSignals}`,
+      `- Completion signals: ${report.executionImpact.completionSignals}`,
+      `- Outcome signals: ${outcomeSignalSummary(report.executionImpact.outcomeSignals)}`,
+      `- Recovery-to-failure ratio: ${report.executionImpact.recoveryToFailureRatio}`,
+      `- Unresolved open loops: ${report.executionImpact.unresolvedOpenLoops}`,
+      "",
       "## Reliability",
       "",
       `- Explicit MCP records captured: ${report.reliability.explicitMcpRecords}`,
@@ -259,7 +322,12 @@ export class EffectivenessReportService {
       `- Latest explicit MCP record: ${report.reliability.latestExplicitMcpAt ?? "none detected"}`,
       `- Latest passive hook event: ${report.reliability.latestPassiveHookAt ?? "none detected"}`,
       `- Passive hook status: ${report.reliability.passiveHookStatus}${typeof report.reliability.passiveHookAgeHours === "number" ? ` (${report.reliability.passiveHookAgeHours}h old)` : ""}`,
+      `- Passive hook proof: ${report.reliability.passiveHookProof}`,
       `- Passive hook coverage: ${report.reliability.passiveHookCoverage} hook traces/context brief`,
+      `- Passive hook watchdog: ${report.reliability.passiveHookWatchdog}`,
+      `- Hook attempt fallback log: ${report.reliability.hookAttemptLogStatus} (${report.reliability.hookAttemptLogEntries} entries, ${report.reliability.realHookAttemptLogEntries} real)`,
+      `- Latest hook attempt: ${report.reliability.latestHookAttemptAt ?? "none detected"}`,
+      `- Latest real hook attempt: ${report.reliability.latestRealHookAttemptAt ?? "none detected"}`,
       `- Hook failures logged: ${report.reliability.hookFailuresLogged}`,
       `- MCP failures logged: ${report.reliability.mcpFailuresLogged}`,
       `- Secret/redaction indicators in stored text: ${report.reliability.suspectedSecrets}`,
@@ -289,7 +357,13 @@ export class EffectivenessReportService {
       ...bulletList(report.evidence.recoverySamples),
       "",
       "Failure samples:",
-      ...bulletList(report.evidence.failureSamples)
+      ...bulletList(report.evidence.failureSamples),
+      "",
+      "Verification samples:",
+      ...bulletList(report.evidence.verificationSamples),
+      "",
+      "Completion samples:",
+      ...bulletList(report.evidence.completionSamples)
     ];
     return `${lines.join("\n")}\n`;
   }
@@ -301,7 +375,7 @@ export class EffectivenessReportService {
     const activeMemories = scalar(this.db, `SELECT COUNT(*) FROM memories ${filter.memoryWhereWith("stale_status = 'active'")}`, filter.params);
     const contextBriefsGenerated = scalar(this.db, `SELECT COUNT(*) FROM metrics ${filter.metricWhereWith("metric_name = 'context_brief_generation_latency'")}`, filter.params);
     const retrievalTraces = scalar(this.db, `SELECT COUNT(*) FROM trace_entries ${filter.traceWhereWith("trace_type = 'retrieval'")}`, filter.params);
-    const hookEvents = scalar(this.db, `SELECT COUNT(*) FROM trace_entries ${filter.traceWhereWith("trace_type = 'hook'")}`, filter.params);
+    const hookEvents = scalar(this.db, `SELECT COUNT(*) FROM trace_entries ${filter.traceWhereWith(REAL_PASSIVE_HOOK_PREDICATE)}`, filter.params);
     const decisionsRecorded = scalar(this.db, `SELECT COUNT(*) FROM memories ${filter.memoryWhereWith("event_type = 'decision'")}`, filter.params);
     const preferencesRecorded = scalar(this.db, `SELECT COUNT(*) FROM memories ${filter.memoryWhereWith("event_type = 'preference'")}`, filter.params);
     const openLoopsCreated = scalar(this.db, `SELECT COUNT(*) FROM open_loops ${filter.openLoopWhere}`, filter.params);
@@ -335,7 +409,7 @@ export class EffectivenessReportService {
     const memoryRows = this.db
       .prepare(
         `SELECT m.project_id, p.name AS project_name, p.root_path, m.session_id, m.event_type, (COALESCE(m.summary, '') || ' ' || m.content) AS text, m.created_at
-         FROM memories m LEFT JOIN projects p ON p.id = m.project_id ${filter.memoryJoinWhere}`
+         FROM memories m LEFT JOIN projects p ON p.id = m.project_id ${filter.memoryJoinWhereWith("m.tags_json NOT LIKE '%project_state%'")}`
       )
       .all(filter.params) as TextRow[];
     return [...eventRows, ...memoryRows].sort((left, right) => left.created_at.localeCompare(right.created_at));
@@ -349,7 +423,11 @@ export class EffectivenessReportService {
 
   private latestTraceAt(filter: QueryFilter, traceType: string): string | undefined {
     const row = this.db
-      .prepare(`SELECT created_at FROM trace_entries ${filter.traceWhereWith("trace_type = @latestTraceType")} ORDER BY created_at DESC LIMIT 1`)
+      .prepare(
+        `SELECT created_at FROM trace_entries ${filter.traceWhereWith(
+          traceType === "hook" ? REAL_PASSIVE_HOOK_PREDICATE : "trace_type = @latestTraceType"
+        )} ORDER BY created_at DESC LIMIT 1`
+      )
       .get({ ...filter.params, latestTraceType: traceType }) as { created_at?: string } | undefined;
     return row?.created_at;
   }
@@ -460,6 +538,79 @@ export class EffectivenessReportService {
     };
   }
 
+  private executionImpact(
+    filter: QueryFilter,
+    summary: EffectivenessReport["summary"],
+    resilience: EffectivenessReport["resilience"],
+    textRows: TextRow[]
+  ): EffectivenessReport["executionImpact"] {
+    const compactedSessions = scalar(this.db, `SELECT COUNT(*) FROM sessions ${filter.sessionWhereWith("status = 'compacted'")}`, filter.params);
+    const compactSessionMemories = scalar(
+      this.db,
+      `SELECT COUNT(*) FROM memories ${filter.memoryWhereWith(
+        "(event_type = 'session_stop' OR tags_json LIKE '%compact_session%' OR source_refs_json LIKE '%compact_session%')"
+      )}`,
+      filter.params
+    );
+    const compactionSignals = Math.max(compactedSessions, compactSessionMemories);
+    const compactionDependencyRate = summary.contextBriefsGenerated ? round(compactionSignals / summary.contextBriefsGenerated, 3) : compactionSignals;
+    const contextBriefsPerCompactionSignal = compactionSignals ? round(summary.contextBriefsGenerated / compactionSignals, 2) : summary.contextBriefsGenerated;
+    const verificationSignals = uniqueSignalRows(textRows, isVerificationSignal).length;
+    const completionSignals = uniqueSignalRows(textRows, (row) => COMPLETION_REGEX.test(row.text)).length;
+    const unresolvedOpenLoops = scalar(this.db, `SELECT COUNT(*) FROM open_loops ${filter.openLoopWhereWith("status = 'open'")}`, filter.params);
+    const outcomeSignals = this.outcomeSignals(filter);
+    const recoveryToFailureRatio = resilience.failureSignals
+      ? round(resilience.recoverySignals / resilience.failureSignals, 2)
+      : resilience.recoverySignals > 0
+        ? resilience.recoverySignals
+        : 1;
+    const compactionPressure = compactionPressureLevel(compactionSignals, contextBriefsPerCompactionSignal);
+    const executionContinuityScore = executionScore({
+      summary,
+      resilience,
+      compactionPressure,
+      verificationSignals,
+      completionSignals,
+      unresolvedOpenLoops,
+      recoveryToFailureRatio
+    });
+    return {
+      compactionSignals,
+      compactionDependencyRate,
+      contextBriefsPerCompactionSignal,
+      compactionPressure,
+      verificationSignals,
+      completionSignals,
+      unresolvedOpenLoops,
+      recoveryToFailureRatio,
+      executionContinuityScore,
+      outcomeSignals,
+      verdict: executionVerdict(executionContinuityScore, {
+        contextBriefsGenerated: summary.contextBriefsGenerated,
+        verificationSignals,
+        completionSignals,
+        compactionPressure
+      })
+    };
+  }
+
+  private outcomeSignals(filter: QueryFilter): Record<string, number> {
+    const rows = this.db
+      .prepare(
+        `SELECT title, summary
+         FROM events
+         ${filter.eventWhereWith("event_type = 'outcome'")}
+         ORDER BY created_at DESC`
+      )
+      .all(filter.params) as Array<{ title?: string; summary?: string }>;
+    const counts: Record<string, number> = {};
+    for (const row of rows) {
+      const key = String(row.title ?? row.summary ?? "outcome").replace(/^Outcome:\s*/i, "") || "outcome";
+      counts[key] = (counts[key] ?? 0) + 1;
+    }
+    return counts;
+  }
+
   private projectAggregates(filter: QueryFilter, textRows: TextRow[]) {
     const rows = this.db.prepare(`SELECT id, name, root_path, last_seen_at FROM projects ${filter.projectWhere} ORDER BY last_seen_at DESC LIMIT 10`).all(filter.params) as ProjectAggregateRow[];
     const groups = projectGroups(rows);
@@ -501,11 +652,14 @@ interface QueryFilter {
   params: Record<string, unknown>;
   windowStart: string | null;
   sessionWhere: string;
+  sessionWhereWith: (extra: string) => string;
   sessionJoinWhere: string;
   eventWhere: string;
+  eventWhereWith: (extra: string) => string;
   eventJoinWhere: string;
   memoryWhere: string;
   memoryJoinWhere: string;
+  memoryJoinWhereWith: (extra: string) => string;
   metricWhereWith: (extra: string) => string;
   traceWhereWith: (extra: string) => string;
   memoryWhereWith: (extra: string) => string;
@@ -580,11 +734,14 @@ function buildFilter(windowStart: string | null, projectId?: string, projectName
     params,
     windowStart,
     sessionWhere: where(sessionClauses),
+    sessionWhereWith: (extra: string) => where([...sessionClauses, extra]),
     sessionJoinWhere: prefixedWhere(sessionClauses, "s"),
     eventWhere: where(eventClauses),
+    eventWhereWith: (extra: string) => where([...eventClauses, extra]),
     eventJoinWhere: prefixedWhere(eventClauses, "e"),
     memoryWhere: where(memoryClauses),
     memoryJoinWhere: prefixedWhere(memoryClauses, "m"),
+    memoryJoinWhereWith: (extra: string) => prefixedWhere([...memoryClauses, extra], "m"),
     metricWhereWith: (extra: string) => where([...metricClauses, extra]),
     traceWhereWith: (extra: string) => where([...traceClauses, extra]),
     memoryWhereWith: (extra: string) => where([...memoryClauses, extra]),
@@ -630,6 +787,13 @@ function isFailureSignal(row: TextRow): boolean {
   return !NEGATED_FAILURE_REGEX.test(row.text);
 }
 
+function isVerificationSignal(row: TextRow): boolean {
+  if (row.event_type === "test_result" && !isFailureSignal(row)) return true;
+  if (!VERIFICATION_REGEX.test(row.text)) return false;
+  VERIFICATION_REGEX.lastIndex = 0;
+  return !isFailureSignal(row);
+}
+
 function captureMode(explicitMcpRecords: number, passiveHookEvents: number): EffectivenessReport["reliability"]["captureMode"] {
   if (explicitMcpRecords > 0 && passiveHookEvents > 0) return "explicit_mcp_and_passive_hooks";
   if (explicitMcpRecords > 0) return "explicit_mcp_only";
@@ -637,9 +801,16 @@ function captureMode(explicitMcpRecords: number, passiveHookEvents: number): Eff
   return "none";
 }
 
-function passiveHookStatus(latestPassiveHookAt?: string, passiveHookAgeHours?: number): EffectivenessReport["reliability"]["passiveHookStatus"] {
-  if (!latestPassiveHookAt) return "not_seen";
-  return typeof passiveHookAgeHours === "number" && passiveHookAgeHours <= RECENT_PASSIVE_HOOK_HOURS ? "recent" : "stale";
+function passiveHookWatchdog(input: {
+  explicitMcpRecords: number;
+  passiveHookEvents: number;
+  passiveHookStatus: EffectivenessReport["reliability"]["passiveHookStatus"];
+  realHookAttemptLogEntries: number;
+}): EffectivenessReport["reliability"]["passiveHookWatchdog"] {
+  if (input.realHookAttemptLogEntries > 0 && input.passiveHookEvents === 0) return "hook_attempts_without_traces";
+  if (input.explicitMcpRecords > 0 && input.passiveHookStatus !== "recent") return "mcp_active_but_hooks_absent";
+  if (input.explicitMcpRecords === 0 && input.passiveHookEvents === 0) return "no_recent_activity";
+  return "ok";
 }
 
 function ageHours(iso?: string): number | undefined {
@@ -672,9 +843,9 @@ function selectedTraceTokenTotal(payload: Record<string, unknown>): number {
 }
 
 function memoryPressureLevel(input: { activeMemories: number; estimatedActiveMemoryTokens: number; memoryToBriefRatio: number }): EffectivenessReport["memoryPressure"]["level"] {
-  if (input.activeMemories >= 750 || input.estimatedActiveMemoryTokens >= 75000 || input.memoryToBriefRatio >= 75) return "critical";
-  if (input.activeMemories >= 300 || input.estimatedActiveMemoryTokens >= 35000 || input.memoryToBriefRatio >= 40) return "high";
-  if (input.activeMemories >= 120 || input.estimatedActiveMemoryTokens >= 15000 || input.memoryToBriefRatio >= 20) return "moderate";
+  if (input.estimatedActiveMemoryTokens >= 75000 || input.memoryToBriefRatio >= 75 || (input.activeMemories >= 750 && input.memoryToBriefRatio >= 20)) return "critical";
+  if (input.estimatedActiveMemoryTokens >= 35000 || input.memoryToBriefRatio >= 40 || input.activeMemories >= 500) return "high";
+  if (input.estimatedActiveMemoryTokens >= 15000 || input.memoryToBriefRatio >= 20 || input.activeMemories >= 300) return "moderate";
   return "low";
 }
 
@@ -703,6 +874,68 @@ function memoryPressureRecommendations(input: {
     recommendations.push("Generate at least one working-context brief to confirm active memories are retrievable.");
   }
   return recommendations;
+}
+
+function compactionPressureLevel(
+  compactionSignals: number,
+  contextBriefsPerCompactionSignal: number
+): EffectivenessReport["executionImpact"]["compactionPressure"] {
+  if (compactionSignals === 0) return "none_observed";
+  if (contextBriefsPerCompactionSignal >= 8) return "low";
+  if (contextBriefsPerCompactionSignal >= 3) return "moderate";
+  return "high";
+}
+
+function executionScore(input: {
+  summary: EffectivenessReport["summary"];
+  resilience: EffectivenessReport["resilience"];
+  compactionPressure: EffectivenessReport["executionImpact"]["compactionPressure"];
+  verificationSignals: number;
+  completionSignals: number;
+  unresolvedOpenLoops: number;
+  recoveryToFailureRatio: number;
+}): number {
+  let score = 30;
+  if (input.summary.contextBriefsGenerated > 0) score += 15;
+  if (input.summary.memoriesStored > 0) score += 10;
+  if (input.resilience.resumeSignals > 0) score += 10;
+  if (input.resilience.checkpointSignals > 0) score += 10;
+  if (input.verificationSignals > 0) score += 15;
+  if (input.completionSignals > 0) score += 10;
+  if (input.resilience.failureSignals === 0) score += 8;
+  else score += Math.min(12, Math.max(0, input.recoveryToFailureRatio) * 8);
+  if (input.unresolvedOpenLoops === 0) score += 7;
+  else score -= Math.min(20, input.unresolvedOpenLoops * 5);
+  if (input.compactionPressure === "none_observed" || input.compactionPressure === "low") score += 5;
+  if (input.compactionPressure === "high") score -= 10;
+  let cap = 100;
+  if (input.completionSignals === 0) cap = Math.min(cap, input.verificationSignals > 0 ? 78 : 68);
+  if (input.verificationSignals === 0) cap = Math.min(cap, input.completionSignals > 0 ? 82 : 68);
+  if (input.compactionPressure === "high") cap = Math.min(cap, 82);
+  if (input.summary.contextBriefsGenerated === 0) cap = Math.min(cap, 50);
+  return Math.max(0, Math.min(cap, Math.round(score)));
+}
+
+function executionVerdict(
+  score: number,
+  input: {
+    contextBriefsGenerated: number;
+    verificationSignals: number;
+    completionSignals: number;
+    compactionPressure: EffectivenessReport["executionImpact"]["compactionPressure"];
+  }
+): string {
+  if (input.contextBriefsGenerated === 0) return "No execution-impact evidence yet; generate working-context briefs during real tasks.";
+  if (score >= 80 && input.verificationSignals > 0 && input.completionSignals > 0) {
+    return "Strong evidence CCM is improving execution continuity, not just saving tokens.";
+  }
+  if (score >= 70) {
+    return "Promising execution-continuity evidence; add more verified completions before making broad performance claims.";
+  }
+  if (input.compactionPressure === "high") {
+    return "Context is being preserved, but compaction pressure is high enough to limit real-world execution claims.";
+  }
+  return "Insufficient real-world execution evidence; capture checkpoints, verification, and completion outcomes more consistently.";
 }
 
 function projectGroups(rows: ProjectAggregateRow[]): Array<{ ids: string[]; name: string; rootPath?: string; lastSeenAt: string }> {
@@ -784,10 +1017,16 @@ function projectLines(projects: EffectivenessReport["projects"]): string[] {
   );
 }
 
+function outcomeSignalSummary(signals: Record<string, number>): string {
+  const entries = Object.entries(signals).sort((left, right) => right[1] - left[1]);
+  return entries.length ? entries.map(([key, value]) => `${key}=${value}`).join(", ") : "none";
+}
+
 function publishReadiness(
   summary: EffectivenessReport["summary"],
   effectiveness: EffectivenessReport["effectiveness"],
   resilience: EffectivenessReport["resilience"],
+  executionImpact: EffectivenessReport["executionImpact"],
   reliability: EffectivenessReport["reliability"],
   memoryPressure: EffectivenessReport["memoryPressure"]
 ): EffectivenessReport["publishReadiness"] {
@@ -810,6 +1049,19 @@ function publishReadiness(
     score += 15;
     strengths.push("Resume/checkpoint signals are visible for long-running work.");
   } else gaps.push("No resume/checkpoint evidence detected yet.");
+  if (executionImpact.executionContinuityScore >= 80) {
+    score += 8;
+    strengths.push("Execution-impact signals show verified continuity beyond token savings.");
+  } else if (executionImpact.executionContinuityScore >= 65) {
+    score += 4;
+    strengths.push("Execution-impact signals are promising but need more verified completions.");
+  } else {
+    gaps.push("Execution-impact evidence is still weak; capture verification and completion outcomes more consistently.");
+  }
+  if (executionImpact.compactionPressure === "high") {
+    score -= 8;
+    gaps.push("Compaction pressure is high; CCM may still depend on frequent handoffs for continuity.");
+  }
   if (reliability.mcpFailuresLogged === 0 && reliability.explicitMcpRecords > 0) {
     score += 8;
     strengths.push("Explicit MCP record capture is working.");
@@ -822,6 +1074,13 @@ function publishReadiness(
   else if (reliability.passiveHookStatus === "stale")
     gaps.push(`Passive hook capture is stale; latest hook was ${reliability.passiveHookAgeHours ?? "unknown"} hours ago.`);
   else gaps.push("No passive hook events have been observed yet.");
+  if (reliability.passiveHookWatchdog === "mcp_active_but_hooks_absent") {
+    gaps.push("Passive hook watchdog sees active MCP use but no recent real passive hook capture.");
+  } else if (reliability.passiveHookWatchdog === "hook_attempts_without_traces") {
+    gaps.push("Hook attempt log saw real hook launches that did not become passive hook traces.");
+  } else if (reliability.hookAttemptLogStatus === "self_test_only") {
+    gaps.push("Hook attempt fallback log contains only self-tests, not real Codex-fired hooks.");
+  }
   if (reliability.suspectedSecrets === 0) {
     score += 5;
     strengths.push("No obvious secret material appears in stored report text.");

@@ -31,7 +31,7 @@ import { registerAdaptiveAgentGuidanceTools } from "./tools/adaptive-agent-guida
 export function buildServer(service: CcmService): McpServer {
   const server = new McpServer({
     name: "cognitive-context-manager",
-    version: "0.3.2"
+    version: "0.3.3"
   });
 
   registerGetWorkingContext(server, service);

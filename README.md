@@ -12,9 +12,9 @@ It is meant to support long Codex flows without dumping raw transcripts into the
 - Skill instructions in `skills/cognitive-context/SKILL.md`
 - SQLite storage at `~/.codex/cognitive-context-manager/ccm.sqlite`
 - CLI commands through `ccm`
-- Local-only deterministic FTS retrieval
+- Hybrid retrieval with OpenAI embeddings through existing Codex auth, plus local deterministic fallback
 - Secret redaction before every memory write
-- Post-MVP trace explainability, schema safety, metrics, optional embeddings, daemon jobs, encrypted file sync, AGENTS.md suggestions, hygiene/quarantine, benchmarks, and localhost UI
+- Post-MVP trace explainability, schema safety, metrics, default embeddings, daemon jobs, encrypted file sync, AGENTS.md suggestions, hygiene/quarantine, benchmarks, and localhost UI
 - Effectiveness reporting with passive-hook recency, memory-pressure, checkpoint/resume, and context-dividend signals
 - Adaptive Agent Guidance in CCM-owned `CCM_AGENTS.md`, with audit history, pending patches, rollback, and compact context-brief injection
 
@@ -110,9 +110,9 @@ ccm export --project current --out ./ccm-export.json
 
 ## Post-MVP Features
 
-Advanced features are opt-in and fail back to SQLite + FTS:
+Advanced features fail back to SQLite + FTS or local-only behavior:
 
-- Embeddings: disabled by default. Use `embeddings.enabled=true` and provider `local`, `lmstudio`, `openai`, or `custom`.
+- Embeddings: enabled by default. CCM uses `~/.codex/auth.json` Codex ChatGPT auth for OpenAI embeddings, unless `embeddings.openai.authMode`, `embeddings.provider`, or `embeddings.enabled=false` says otherwise. If Codex auth is unavailable, it falls back to local deterministic embeddings.
 - Daemon: optional queue processor for embeddings and hygiene. Hooks and MCP work without it.
 - Sync: disabled by default. File sync writes encrypted bundles with a local key.
 - UI: optional dashboard bound to `127.0.0.1` by default through `ccm ui start`.
@@ -122,4 +122,4 @@ Advanced features are opt-in and fail back to SQLite + FTS:
 
 ## Privacy
 
-CCM does not send telemetry and does not require cloud services. Cloud embeddings or summarization require explicit configuration. Secrets are redacted before storage, embedding, summarization, sync, export, and context injection. Retrieved memory is wrapped as contextual data and never outranks AGENTS.md or higher-priority Codex instructions.
+CCM does not send telemetry. OpenAI embeddings are enabled by default through existing Codex auth and redact text before requests; set `embeddings.enabled=false`, `embeddings.provider=local`, or `privacy.allowCloudEmbeddings=false` for a fully local embedding path. Cloud summarization still requires explicit configuration. Secrets are redacted before storage, embedding, summarization, sync, export, and context injection. Retrieved memory is wrapped as contextual data and never outranks AGENTS.md or higher-priority Codex instructions.

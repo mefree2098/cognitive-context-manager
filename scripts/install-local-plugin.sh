@@ -9,6 +9,7 @@ PLUGIN_DIR="${CCM_PLUGIN_DIR:-"$MARKETPLACE_DIR/plugins/$PLUGIN_NAME"}"
 CONFIG_PATH="${CODEX_CONFIG_PATH:-"$HOME/.codex/config.toml"}"
 SKIP_NPM=0
 SKIP_CONFIG=0
+SKIP_CACHE=0
 
 usage() {
   cat <<'EOF'
@@ -23,6 +24,7 @@ Options:
   --config PATH           Codex config.toml path. Default: ~/.codex/config.toml
   --skip-npm              Skip npm install/build/prune. Intended only for tests.
   --skip-config           Do not edit Codex config.toml.
+  --skip-cache            Do not refresh Codex's local plugin cache copy.
   -h, --help              Show this help.
 EOF
 }
@@ -48,6 +50,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --skip-config)
       SKIP_CONFIG=1
+      shift
+      ;;
+    --skip-cache)
+      SKIP_CACHE=1
       shift
       ;;
     -h|--help)
@@ -147,6 +153,24 @@ if [[ "$SKIP_NPM" -eq 0 ]]; then
   )
 fi
 
+if [[ "$SKIP_CACHE" -eq 0 ]]; then
+  PLUGIN_VERSION="$(node -e "console.log(require(process.argv[1]).version)" "$PLUGIN_DIR/package.json")"
+  CACHE_DIR="${CCM_CODEX_CACHE_DIR:-"$HOME/.codex/plugins/cache/local/$PLUGIN_NAME/$PLUGIN_VERSION"}"
+  CACHE_REAL_PARENT="$(dirname "$CACHE_DIR")"
+  mkdir -p "$CACHE_REAL_PARENT"
+  if [[ "$PLUGIN_REAL" != "$(mkdir -p "$CACHE_DIR" && cd "$CACHE_DIR" && pwd -P)" ]]; then
+    rsync -a --delete \
+      --exclude '.git/' \
+      --exclude 'release/' \
+      --exclude 'bench/results/' \
+      --exclude '.env' \
+      --exclude '*.sqlite' \
+      --exclude '*.sqlite-shm' \
+      --exclude '*.sqlite-wal' \
+      "$PLUGIN_DIR/" "$CACHE_DIR/"
+  fi
+fi
+
 if [[ "$SKIP_CONFIG" -eq 0 ]]; then
   node - "$CONFIG_PATH" "$MARKETPLACE_DIR" "$PLUGIN_NAME" <<'NODE'
 const fs = require("node:fs");
@@ -222,6 +246,9 @@ Marketplace:
 
 Plugin:
   $PLUGIN_DIR
+
+Codex plugin cache:
+  ${CACHE_DIR:-"(skipped)"}
 
 Codex config:
   $CONFIG_PATH

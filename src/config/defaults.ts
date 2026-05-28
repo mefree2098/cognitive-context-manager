@@ -28,7 +28,7 @@ export const defaultConfig: CcmConfig = {
     maxMemories: 12,
     includeStaleWarnings: true,
     searchMode: "fts",
-    mode: "fts",
+    mode: "hybrid",
     ftsWeight: 0.45,
     vectorWeight: 0.35,
     salienceWeight: 0.1,
@@ -37,15 +37,18 @@ export const defaultConfig: CcmConfig = {
     excludeSuperseded: true
   },
   embeddings: {
-    enabled: false,
-    provider: "none",
-    model: "",
-    dimensions: 0,
+    enabled: true,
+    provider: "openai",
+    fallbackProvider: "local",
+    model: "text-embedding-3-small",
+    dimensions: 1536,
     batchSize: 32,
     redactBeforeEmbedding: true,
     storeRawEmbeddingInput: false,
     openai: {
+      authMode: "codex",
       apiKeyEnv: "OPENAI_API_KEY",
+      codexAuthPath: "~/.codex/auth.json",
       model: "text-embedding-3-small"
     },
     lmstudio: {
@@ -107,7 +110,7 @@ export const defaultConfig: CcmConfig = {
     storeRawPrompts: false,
     storeRawToolOutput: false,
     redactSecrets: true,
-    allowCloudEmbeddings: false,
+    allowCloudEmbeddings: true,
     syncRawLogs: false,
     storeRawEmbeddingInput: false,
     allowTelemetry: false

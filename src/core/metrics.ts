@@ -26,6 +26,7 @@ export class MetricsService {
     const events = this.db.prepare(`SELECT summary FROM events ${where}`).all(params) as Row[];
     const injectedMemoryTokens = memories.reduce((sum, row) => sum + estimateTokens(String(row.summary ?? row.content ?? "")), 0);
     const rawTokensAvoided = Math.max(0, events.reduce((sum, row) => sum + estimateTokens(String(row.summary ?? "")), 0) * 3 - injectedMemoryTokens);
+    const netEstimatedTokenSavings = Math.max(0, rawTokensAvoided + Math.floor(rawTokensAvoided * 0.35) - injectedMemoryTokens);
     const supersededExcluded = memories.filter((row) => row.stale_status && row.stale_status !== "active").length;
     const openLoopsPreserved = memories.filter((row) => row.memory_type === "open_loop").length;
     return {
@@ -39,7 +40,7 @@ export class MetricsService {
       repeatUserRemindersDetected: memories.filter((row) => /again|from now on|remember/i.test(String(row.content ?? ""))).length,
       staleFactPreventions: supersededExcluded,
       fallbackEvents: 0,
-      netEstimatedTokenSavings: rawTokensAvoided + Math.floor(rawTokensAvoided * 0.35) - injectedMemoryTokens,
+      netEstimatedTokenSavings,
       qualityNotes: [
         `${supersededExcluded} stale or non-active memories excluded from normal injection`,
         `${openLoopsPreserved} open-loop memories preserved`,
