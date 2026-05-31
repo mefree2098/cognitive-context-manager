@@ -447,6 +447,8 @@ describe("post-MVP features", () => {
       expect(html).toContain("Net Token Savings");
       expect(html).toContain("Process Embeddings");
       expect(html).toContain("Preview Hygiene");
+      expect(html).toContain("Briefs per session");
+      expect(html).not.toContain("Activation rate");
       expect(html).toContain("/assets/favicon-32.png");
       expect(html).toContain("/assets/ccm-icon-256.png");
       const favicon = await fetch(`${ui.url}/assets/favicon-32.png`);
