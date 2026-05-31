@@ -394,7 +394,7 @@ function dashboardHtml(): string {
       const detailGrid = document.getElementById('detail-grid');
       detailGrid.innerHTML = [
         detailPanel('Retrieval & Tokens', {
-          'Activation rate': percent(effectiveness.contextActivationRate),
+          'Briefs per session': formatNumber(effectiveness.contextActivationRate),
           'Injected memory tokens': formatNumber(effectiveness.estimatedInjectedMemoryTokens),
           'Stale excluded': formatNumber(effectiveness.staleOrSupersededMemoriesExcluded),
           'Retrieved memories used': formatNumber(pressure.retrievedMemoriesUsed)
@@ -433,9 +433,6 @@ function dashboardHtml(): string {
     }
     function score(value) {
       return typeof value === 'number' && Number.isFinite(value) ? Math.round(value) + '/100' : '0/100';
-    }
-    function percent(value) {
-      return typeof value === 'number' && Number.isFinite(value) ? Math.round(value * 100) + '%' : '0%';
     }
     function formatDate(value) {
       if (!value) return 'unknown';
