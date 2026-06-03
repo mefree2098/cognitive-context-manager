@@ -27,4 +27,5 @@ export interface HookResult {
   message?: string;
   warnings: string[];
   ids: string[];
+  hookSpecificOutput?: Record<string, unknown>;
 }

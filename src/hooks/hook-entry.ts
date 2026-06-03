@@ -77,8 +77,11 @@ async function main(): Promise<void> {
   const payload = parsePayload(stdin);
   try {
     const result = await runHook(eventName, payload);
-    if (result.warnings.length) {
-      process.stdout.write(`${JSON.stringify({ ok: true, warnings: result.warnings })}\n`);
+    const response: Record<string, unknown> = {};
+    if (result.warnings.length) response.warnings = result.warnings;
+    if (result.hookSpecificOutput) response.hookSpecificOutput = result.hookSpecificOutput;
+    if (Object.keys(response).length) {
+      process.stdout.write(`${JSON.stringify({ ok: true, ...response })}\n`);
     }
   } catch (error) {
     recordHookAttempt({ stage: "failed", eventName, rawPayload: payload, pluginRoot, error });

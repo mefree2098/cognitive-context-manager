@@ -6,6 +6,7 @@ import { openDb } from "../storage/db.js";
 import { log } from "../core/logger.js";
 import { isMainModule } from "../runtime/is-main.js";
 import { registerCompactSession } from "./tools/compact-session.js";
+import { registerAutoTailContext } from "./tools/auto-tail-context.js";
 import { registerExplainMemory } from "./tools/explain-memory.js";
 import { registerExplainRetrieval } from "./tools/explain-retrieval.js";
 import { registerForgetMemory } from "./tools/forget-memory.js";
@@ -15,6 +16,7 @@ import { registerGetProjectState } from "./tools/get-project-state.js";
 import { registerGetRecentEvents } from "./tools/get-recent-events.js";
 import { registerGetWorkingContext } from "./tools/get-working-context.js";
 import { registerMarkStale } from "./tools/mark-stale.js";
+import { registerNativeMemoryTools } from "./tools/native-memory.js";
 import { registerOpenLoopTools } from "./tools/open-loop-tools.js";
 import { registerPreviewContextBrief } from "./tools/preview-context-brief.js";
 import { registerQuarantineMemory } from "./tools/quarantine-memory.js";
@@ -35,6 +37,7 @@ export function buildServer(service: CcmService): McpServer {
   });
 
   registerGetWorkingContext(server, service);
+  registerAutoTailContext(server, service);
   registerSearchMemories(server, service);
   registerExplainRetrieval(server, service);
   registerPreviewContextBrief(server, service);
@@ -42,6 +45,7 @@ export function buildServer(service: CcmService): McpServer {
   registerGetOpenLoops(server, service);
   registerGetRecentEvents(server, service);
   registerGetArtifactState(server, service);
+  registerNativeMemoryTools(server, service);
   registerRecordDecision(server, service);
   registerRecordPreference(server, service);
   registerOpenLoopTools(server, service);

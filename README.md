@@ -60,6 +60,17 @@ CCM is in public beta. Explicit skill/MCP use, local storage, context briefs, em
 - Effectiveness reporting with passive-hook recency, memory-pressure, checkpoint/resume, and context-dividend signals
 - Adaptive Agent Guidance in CCM-owned `CCM_AGENTS.md`, with audit history, pending patches, rollback, and compact context-brief injection
 
+## Headroom Compatibility
+
+CCM can run alongside Headroom without making Headroom a competing source of truth. The recommended split is:
+
+- **CCM owns durable memory:** project state, decisions, open loops, artifacts, stale/superseded records, quarantine, redaction, and context briefs.
+- **Headroom owns context transport:** proxy routing, compression, retrieval markers, and token/session statistics.
+- **Bridge tools stay explicit:** `ccm memory-bridge export` and `ccm memory-bridge import` round-trip memories through Markdown, while MCP aliases such as `memory_save`, `memory_search`, `memory_list`, `memory_update`, and `memory_delete` map provider-native memory calls into CCM's typed store.
+- **Auto-tail remains policy-gated:** `ccm context auto-tail` and `preview_auto_tail_context` show the context block a runtime adapter could append, but runtime injection is disabled by default and requires explicit configuration.
+
+See [docs/memory-bridge.md](docs/memory-bridge.md) for the Headroom-style bridge format, native-memory adapter policy, and auto-tail safety gates.
+
 ## Quick Start
 
 For Codex Desktop, the easiest path is the local-plugin installer:

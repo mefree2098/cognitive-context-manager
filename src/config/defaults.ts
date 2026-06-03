@@ -36,6 +36,22 @@ export const defaultConfig: CcmConfig = {
     openLoopWeight: 0.05,
     excludeSuperseded: true
   },
+  memoryBridge: {
+    markdown: {
+      enabled: true
+    },
+    nativeTools: {
+      enabled: true
+    },
+    autoTail: {
+      enabled: false,
+      mode: "disabled",
+      maxTokens: 900,
+      requireExplicitPreview: true,
+      includeOpenLoops: true,
+      includeProcedural: true
+    }
+  },
   embeddings: {
     enabled: true,
     provider: "openai",
