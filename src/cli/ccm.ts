@@ -15,6 +15,7 @@ import { registerImportCommand } from "./commands/import.js";
 import { registerInitCommand } from "./commands/init.js";
 import { registerKeysCommand } from "./commands/keys.js";
 import { registerMemoryCommand } from "./commands/memory.js";
+import { registerMemoryBridgeCommand } from "./commands/memory-bridge.js";
 import { registerProjectCommand } from "./commands/project.js";
 import { registerReportCommand } from "./commands/report.js";
 import { registerStatusCommand } from "./commands/status.js";
@@ -32,6 +33,7 @@ export function buildCli(): Command {
   registerStatusCommand(program);
   registerDbCommand(program);
   registerMemoryCommand(program);
+  registerMemoryBridgeCommand(program);
   registerProjectCommand(program);
   registerReportCommand(program);
   registerTraceCommand(program);

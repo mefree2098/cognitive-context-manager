@@ -138,3 +138,28 @@ ccm agents adaptive rollback --to last
 ```
 
 CCM may update its own managed `CCM_AGENTS.md` automatically when durable behavior guidance is repeated or explicit and passes safety checks. It does not silently modify project `AGENTS.md`.
+
+## Memory Bridge
+
+Use `ccm memory-bridge export` and `ccm memory-bridge import` to round-trip CCM memories through Markdown or import generic sectioned Markdown as typed memories.
+
+```bash
+ccm memory-bridge export --project <projectId> --out ccm-memories.md
+ccm memory-bridge import ccm-memories.md --project <projectId>
+ccm memory-bridge import notes.md --type procedural --dry-run
+```
+
+The MCP server also exposes explicit native-style aliases: `memory_save`, `memory_search`, `memory_list`, `memory_update`, and `memory_delete`. These tools write through CCM's typed, redacted, staleness-aware memory store.
+
+See `docs/memory-bridge.md` for the auto-tail and provider-native adapter policy.
+
+Preview the policy-gated latest-user-tail block without injecting it:
+
+```bash
+ccm context auto-tail --query "current task" --force-preview
+ccm context auto-tail --query "current task" --json
+```
+
+The MCP equivalent is `preview_auto_tail_context`. Runtime injection remains disabled by default and is not performed by the preview path.
+
+When `memoryBridge.autoTail.enabled` is true and `mode` is `inject`, the `UserPromptSubmit` hook can emit `hookSpecificOutput.additionalContext` for hosts that support additional prompt context. If `requireExplicitPreview` remains true, the hook also requires an accepted-preview signal before emitting anything.

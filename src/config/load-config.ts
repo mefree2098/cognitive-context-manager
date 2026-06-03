@@ -18,6 +18,13 @@ function mergeConfig(base: CcmConfig, override: Partial<CcmConfig>): CcmConfig {
     storage: { ...base.storage, ...override.storage },
     context: { ...base.context, ...override.context },
     retrieval: { ...base.retrieval, ...override.retrieval },
+    memoryBridge: {
+      ...base.memoryBridge,
+      ...override.memoryBridge,
+      markdown: { ...base.memoryBridge.markdown, ...override.memoryBridge?.markdown },
+      nativeTools: { ...base.memoryBridge.nativeTools, ...override.memoryBridge?.nativeTools },
+      autoTail: { ...base.memoryBridge.autoTail, ...override.memoryBridge?.autoTail }
+    },
     embeddings: {
       ...base.embeddings,
       ...override.embeddings,

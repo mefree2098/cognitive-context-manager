@@ -30,6 +30,22 @@ export interface CcmConfig {
     openLoopWeight: number;
     excludeSuperseded: boolean;
   };
+  memoryBridge: {
+    markdown: {
+      enabled: boolean;
+    };
+    nativeTools: {
+      enabled: boolean;
+    };
+    autoTail: {
+      enabled: boolean;
+      mode: "disabled" | "preview" | "inject";
+      maxTokens: number;
+      requireExplicitPreview: boolean;
+      includeOpenLoops: boolean;
+      includeProcedural: boolean;
+    };
+  };
   embeddings: {
     enabled: boolean;
     provider: "none" | "local" | "lmstudio" | "openai" | "custom";
